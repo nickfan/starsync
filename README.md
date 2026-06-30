@@ -54,10 +54,35 @@ If you intentionally want a token that is ready for future star/unstar write fea
 
 StarSync v1 still does not write star/unstar state even if the token has `Starring: write`.
 
+### Using GitHub CLI
+
+GitHub CLI does not currently create a fine-grained PAT from the terminal. For least-privilege StarSync usage, open the fine-grained PAT page above and create a token with `Starring: read`.
+
+You can still use `gh` in two useful ways.
+
+Open the token creation page from the terminal:
+
+```bash
+gh browse 'https://github.com/settings/personal-access-tokens/new?name=StarSync&description=StarSync%20local-first%20starred%20repository%20sync&expires_in=90&starring=read&contents=read'
+```
+
+Or reuse the GitHub CLI OAuth token for StarSync:
+
+```bash
+gh auth login --web
+gh auth status
+export STARSYNC_GITHUB_TOKEN="$(gh auth token)"
+starsync sync
+```
+
+The `gh auth token` path is convenient, but it is not a dedicated StarSync fine-grained PAT. GitHub CLI stores an OAuth token for the active account; `gh auth login` has its own minimum scopes, and `gh auth refresh --scopes ...` can request more OAuth scopes. Prefer the fine-grained PAT link above when you want the narrowest StarSync token.
+
 Official references:
 
 - [GitHub starring REST API](https://docs.github.com/en/rest/activity/starring?apiVersion=2022-11-28)
 - [Managing personal access tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+- [GitHub CLI auth login](https://cli.github.com/manual/gh_auth_login)
+- [GitHub CLI auth token](https://cli.github.com/manual/gh_auth_token)
 
 ## Configure the token
 

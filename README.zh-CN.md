@@ -54,10 +54,35 @@ v1 推荐权限：
 
 即使 token 有 `Starring: write`，StarSync v1 也不会写 GitHub star/unstar 状态。
 
+### 使用 GitHub CLI
+
+GitHub CLI 目前不能在终端里直接创建 fine-grained PAT。为了给 StarSync 使用最小权限 token，推荐打开上面的 fine-grained PAT 创建页，创建只有 `Starring: read` 权限的 token。
+
+`gh` 仍然有两种有用方式。
+
+从终端打开 token 创建页：
+
+```bash
+gh browse 'https://github.com/settings/personal-access-tokens/new?name=StarSync&description=StarSync%20local-first%20starred%20repository%20sync&expires_in=90&starring=read&contents=read'
+```
+
+或者复用 GitHub CLI 当前账号的 OAuth token：
+
+```bash
+gh auth login --web
+gh auth status
+export STARSYNC_GITHUB_TOKEN="$(gh auth token)"
+starsync sync
+```
+
+`gh auth token` 这条路径很方便，但它不是 StarSync 专用的 fine-grained PAT。GitHub CLI 会为当前账号保存 OAuth token；`gh auth login` 有自己的最小 scopes，`gh auth refresh --scopes ...` 可以额外申请 OAuth scopes。如果你更在意最小权限，优先使用上面的 fine-grained PAT 链接。
+
 官方参考：
 
 - [GitHub starring REST API](https://docs.github.com/en/rest/activity/starring?apiVersion=2022-11-28)
 - [Managing personal access tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+- [GitHub CLI auth login](https://cli.github.com/manual/gh_auth_login)
+- [GitHub CLI auth token](https://cli.github.com/manual/gh_auth_token)
 
 ## 配置 Token
 
