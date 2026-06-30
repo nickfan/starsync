@@ -17,6 +17,74 @@ StarSync 是一个 local-first 的 Rust 服务，用来把你的 GitHub starred 
 
 ## 安装
 
+### Homebrew / Linuxbrew
+
+发布 workflow 更新 tap 后，可以用 Homebrew 或 Linuxbrew 安装：
+
+```bash
+brew tap nickfan/starsync
+brew install starsync
+starsync --help
+```
+
+推荐的公开 tap 仓库名是 `nickfan/homebrew-starsync`，对应 `brew tap nickfan/starsync`。
+
+### Docker
+
+StarSync 会发布容器镜像到 GHCR；如果仓库 variables 和 secrets 配好了，也可以同步发布到 Docker Hub。
+
+```bash
+docker pull ghcr.io/nickfan/starsync:latest
+# Docker Hub，配置 DOCKERHUB_USERNAME=nickfan 后：
+docker pull docker.io/nickfan/starsync:latest
+```
+
+容器默认配置：
+
+```text
+STARSYNC_DATA_DIR=/data
+STARSYNC_STATE_DIR=/state
+STARSYNC_BIND=0.0.0.0:8989
+```
+
+用宿主机路径持久化运行 REST 服务：
+
+```bash
+mkdir -p "$HOME/.starsync/data" "$HOME/.starsync/state"
+
+docker run --rm -it \
+  --name starsync \
+  --env-file .env \
+  -p 8989:8989 \
+  -v "$HOME/.starsync/data:/data" \
+  -v "$HOME/.starsync/state:/state" \
+  ghcr.io/nickfan/starsync:latest
+```
+
+同一份挂载数据也可以跑一次性 CLI 命令：
+
+```bash
+docker run --rm -it \
+  --env-file .env \
+  -v "$HOME/.starsync/data:/data" \
+  -v "$HOME/.starsync/state:/state" \
+  ghcr.io/nickfan/starsync:latest sync
+
+docker run --rm -it \
+  --env-file .env \
+  -v "$HOME/.starsync/data:/data" \
+  -v "$HOME/.starsync/state:/state" \
+  ghcr.io/nickfan/starsync:latest search rust
+```
+
+Docker 场景下 `.env` 可以很简单：
+
+```dotenv
+STARSYNC_GITHUB_TOKEN=github_pat_xxx
+```
+
+### Cargo
+
 ```bash
 cargo build --release
 ```
@@ -333,6 +401,50 @@ starsync storage push
 ```
 
 Git storage 命令只会 stage `repos/` 下的 metadata。Token 和 SQLite 派生状态不会参与 Git metadata sync。
+
+## 发布自动化
+
+仓库已经包含 GitHub Actions：
+
+- `.github/workflows/ci.yml`：在 `master`、pull request、手动触发时运行 format、tests、clippy。
+- `.github/workflows/release.yml`：在 `v0.1.0` 这种 tag 或手动触发时运行。
+- Release workflow 会创建或更新 GitHub Release，上传 Linux binary tarball、vendored source tarball，发布 GHCR 镜像；如果 secrets 配好，也会发布 Docker Hub 镜像并更新 Homebrew/Linuxbrew tap formula。
+
+发下一版时，推一个和 `Cargo.toml` 匹配的版本 tag：
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+也可以手动重发当前 Cargo 版本：
+
+```bash
+gh workflow run release.yml -f version=v0.1.0
+```
+
+GHCR 使用内置 `GITHUB_TOKEN` 发布。发布 Docker Hub 需要配置：
+
+```text
+Repository variable: DOCKERHUB_USERNAME
+Repository secret:   DOCKERHUB_TOKEN
+```
+
+更新 Homebrew/Linuxbrew tap 时，先创建类似 `nickfan/homebrew-starsync` 的 tap 仓库，然后配置：
+
+```text
+Repository variable: HOMEBREW_TAP_REPO=nickfan/homebrew-starsync
+Repository secret:   HOMEBREW_TAP_TOKEN=<有 tap 仓库 contents write 权限的 PAT>
+```
+
+生成的 formula 会从 GitHub Release 的 vendored source tarball 构建，并使用 `cargo install --locked --offline`，这样 Homebrew/Linuxbrew 构建不依赖实时 crates.io index，复现性更好。
+
+参考资料：
+
+- [GitHub Actions: publishing Docker images](https://docs.github.com/en/actions/use-cases-and-examples/publishing-packages/publishing-docker-images)
+- [Docker build-push-action](https://github.com/docker/build-push-action)
+- [Homebrew Formula Cookbook](https://docs.brew.sh/Formula-Cookbook)
+- [How to create and maintain a tap](https://docs.brew.sh/How-to-Create-and-Maintain-a-Tap)
 
 ## 开发
 

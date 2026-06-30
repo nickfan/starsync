@@ -17,6 +17,74 @@ It mirrors your GitHub starred repository list, keeps your personal metadata in 
 
 ## Install
 
+### Homebrew / Linuxbrew
+
+After the release workflow updates the tap, install from Homebrew or Linuxbrew:
+
+```bash
+brew tap nickfan/starsync
+brew install starsync
+starsync --help
+```
+
+The recommended public tap repository name is `nickfan/homebrew-starsync`, which maps to `brew tap nickfan/starsync`.
+
+### Docker
+
+StarSync publishes container images to GHCR, and can also publish to Docker Hub when the repository variables and secrets are configured.
+
+```bash
+docker pull ghcr.io/nickfan/starsync:latest
+# Docker Hub, when DOCKERHUB_USERNAME=nickfan is configured:
+docker pull docker.io/nickfan/starsync:latest
+```
+
+The container defaults are:
+
+```text
+STARSYNC_DATA_DIR=/data
+STARSYNC_STATE_DIR=/state
+STARSYNC_BIND=0.0.0.0:8989
+```
+
+Run the REST service with persistent host paths:
+
+```bash
+mkdir -p "$HOME/.starsync/data" "$HOME/.starsync/state"
+
+docker run --rm -it \
+  --name starsync \
+  --env-file .env \
+  -p 8989:8989 \
+  -v "$HOME/.starsync/data:/data" \
+  -v "$HOME/.starsync/state:/state" \
+  ghcr.io/nickfan/starsync:latest
+```
+
+Run one-shot CLI commands in the same mounted knowledge base:
+
+```bash
+docker run --rm -it \
+  --env-file .env \
+  -v "$HOME/.starsync/data:/data" \
+  -v "$HOME/.starsync/state:/state" \
+  ghcr.io/nickfan/starsync:latest sync
+
+docker run --rm -it \
+  --env-file .env \
+  -v "$HOME/.starsync/data:/data" \
+  -v "$HOME/.starsync/state:/state" \
+  ghcr.io/nickfan/starsync:latest search rust
+```
+
+Your `.env` file can stay minimal for Docker:
+
+```dotenv
+STARSYNC_GITHUB_TOKEN=github_pat_xxx
+```
+
+### Cargo
+
 ```bash
 cargo build --release
 ```
@@ -333,6 +401,50 @@ starsync storage push
 ```
 
 Only metadata under `repos/` is staged by the Git storage command. Tokens and derived SQLite state are not part of the Git metadata sync.
+
+## Release automation
+
+This repository includes GitHub Actions for CI and tagged releases:
+
+- `.github/workflows/ci.yml` runs format, tests, and clippy on `master`, pull requests, and manual dispatch.
+- `.github/workflows/release.yml` runs on tags like `v0.1.0` or manual dispatch.
+- The release workflow creates or updates the GitHub Release, uploads a Linux binary tarball, uploads a vendored source tarball, publishes GHCR images, optionally publishes Docker Hub images, and optionally updates a Homebrew/Linuxbrew tap formula.
+
+Create the next release by pushing a version tag that matches `Cargo.toml`:
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+Or republish the current Cargo version manually:
+
+```bash
+gh workflow run release.yml -f version=v0.1.0
+```
+
+GHCR publishing uses the built-in `GITHUB_TOKEN`. To publish to Docker Hub, configure:
+
+```text
+Repository variable: DOCKERHUB_USERNAME
+Repository secret:   DOCKERHUB_TOKEN
+```
+
+To update a Homebrew/Linuxbrew tap, create a tap repository such as `nickfan/homebrew-starsync` and configure:
+
+```text
+Repository variable: HOMEBREW_TAP_REPO=nickfan/homebrew-starsync
+Repository secret:   HOMEBREW_TAP_TOKEN=<PAT with contents write access to the tap repository>
+```
+
+The generated formula builds from the release vendored source tarball with `cargo install --locked --offline`, which keeps Homebrew/Linuxbrew builds reproducible and independent from the live crates.io index.
+
+Useful references:
+
+- [GitHub Actions: publishing Docker images](https://docs.github.com/en/actions/use-cases-and-examples/publishing-packages/publishing-docker-images)
+- [Docker build-push-action](https://github.com/docker/build-push-action)
+- [Homebrew Formula Cookbook](https://docs.brew.sh/Formula-Cookbook)
+- [How to create and maintain a tap](https://docs.brew.sh/How-to-Create-and-Maintain-a-Tap)
 
 ## Development
 

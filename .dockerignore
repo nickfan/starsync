@@ -1,0 +1,14 @@
+.git
+.github
+target
+dist
+vendor
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+*.log
+**/*.rs.bk
+**/mutants.out*/
