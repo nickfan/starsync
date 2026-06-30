@@ -427,8 +427,11 @@ GHCR publishing uses the built-in `GITHUB_TOKEN`. To publish to Docker Hub, conf
 
 ```text
 Repository variable: DOCKERHUB_USERNAME
+Repository variable: DOCKER_PLATFORMS=linux/amd64
 Repository secret:   DOCKERHUB_TOKEN
 ```
+
+`DOCKER_PLATFORMS` defaults to `linux/amd64`. Set it to `linux/amd64,linux/arm64` when you want multi-architecture Docker images; the first multi-arch build takes longer because Rust is compiled inside Docker for each target platform.
 
 To update a Homebrew/Linuxbrew tap, create a tap repository such as `nickfan/homebrew-starsync` and configure:
 

@@ -128,6 +128,7 @@ jobs:
     if: ${{ github.event_name == 'push' || inputs.publish_docker }}
 
     env:
+      DOCKER_PLATFORMS: ${{ vars.DOCKER_PLATFORMS || 'linux/amd64' }}
       DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
@@ -149,7 +150,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.DOCKER_PLATFORMS }}
           push: true
           tags: |
             ghcr.io/${{ github.repository }}:${{ needs.package.outputs.version }}
@@ -172,7 +173,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.DOCKER_PLATFORMS }}
           push: true
           tags: |
             docker.io/${{ env.DOCKERHUB_USERNAME }}/starsync:${{ needs.package.outputs.version }}
