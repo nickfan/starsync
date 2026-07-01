@@ -474,6 +474,8 @@ Repository variable: HOMEBREW_TAP_REPO=nickfan/homebrew-starsync
 Repository secret:   HOMEBREW_TAP_TOKEN=<有 tap 仓库 contents write 权限的 PAT>
 ```
 
+这些值配置好之后，tap 会由 `.github/workflows/release.yml` 自动维护；正常发版不需要手工编辑 `Formula/starsync.rb`。
+
 生成的 formula 会从 GitHub Release 的 vendored source tarball 构建，并使用 `cargo install --locked --offline`，这样 Homebrew/Linuxbrew 构建不依赖实时 crates.io index，复现性更好。
 
 参考资料：

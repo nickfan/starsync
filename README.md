@@ -474,6 +474,8 @@ Repository variable: HOMEBREW_TAP_REPO=nickfan/homebrew-starsync
 Repository secret:   HOMEBREW_TAP_TOKEN=<PAT with contents write access to the tap repository>
 ```
 
+After these values are configured, the tap is maintained by `.github/workflows/release.yml`; do not edit `Formula/starsync.rb` by hand for normal releases.
+
 The generated formula builds from the release vendored source tarball with `cargo install --locked --offline`, which keeps Homebrew/Linuxbrew builds reproducible and independent from the live crates.io index.
 
 Useful references:

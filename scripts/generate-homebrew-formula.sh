@@ -15,7 +15,7 @@ class Starsync < Formula
   homepage "https://github.com/nickfan/starsync"
   url "${URL}"
   sha256 "${SHA256}"
-  license "MIT"
+  license "Apache-2.0"
 
   depends_on "rust" => :build
 

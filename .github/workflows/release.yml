@@ -220,10 +220,10 @@ jobs:
           cd homebrew-tap
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- Formula/starsync.rb; then
+          git add Formula/starsync.rb
+          if git diff --cached --quiet -- Formula/starsync.rb; then
             echo "Formula is already up to date."
             exit 0
           fi
-          git add Formula/starsync.rb
           git commit -m "starsync ${RELEASE_VERSION}"
           git push
