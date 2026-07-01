@@ -25,6 +25,7 @@ env:
   CARGO_TERM_COLOR: always
 
 permissions:
+  actions: write
   contents: write
   packages: write
 
@@ -146,21 +147,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish GHCR image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: ${{ env.DOCKER_PLATFORMS }}
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ needs.package.outputs.version }}
-            ghcr.io/${{ github.repository }}:${{ needs.package.outputs.version_number }}
-            ghcr.io/${{ github.repository }}:latest
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.version=${{ needs.package.outputs.version }}
-            org.opencontainers.image.description=Local-first GitHub starred repository knowledge sync
-
       - name: Log in to Docker Hub
         if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
         uses: docker/login-action@v3
@@ -168,21 +154,36 @@ jobs:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ env.DOCKERHUB_TOKEN }}
 
-      - name: Publish Docker Hub image
-        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+      - name: Resolve Docker image tags
+        id: docker_tags
+        run: |
+          set -euo pipefail
+          {
+            echo "tags<<EOF"
+            echo "ghcr.io/${GITHUB_REPOSITORY}:${{ needs.package.outputs.version }}"
+            echo "ghcr.io/${GITHUB_REPOSITORY}:${{ needs.package.outputs.version_number }}"
+            echo "ghcr.io/${GITHUB_REPOSITORY}:latest"
+            if [[ -n "${DOCKERHUB_USERNAME}" && -n "${DOCKERHUB_TOKEN}" ]]; then
+              echo "docker.io/${DOCKERHUB_USERNAME}/starsync:${{ needs.package.outputs.version }}"
+              echo "docker.io/${DOCKERHUB_USERNAME}/starsync:${{ needs.package.outputs.version_number }}"
+              echo "docker.io/${DOCKERHUB_USERNAME}/starsync:latest"
+            fi
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Publish container images
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: ${{ env.DOCKER_PLATFORMS }}
           push: true
-          tags: |
-            docker.io/${{ env.DOCKERHUB_USERNAME }}/starsync:${{ needs.package.outputs.version }}
-            docker.io/${{ env.DOCKERHUB_USERNAME }}/starsync:${{ needs.package.outputs.version_number }}
-            docker.io/${{ env.DOCKERHUB_USERNAME }}/starsync:latest
+          tags: ${{ steps.docker_tags.outputs.tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=${{ needs.package.outputs.version }}
             org.opencontainers.image.description=Local-first GitHub starred repository knowledge sync
+          cache-from: type=gha,scope=starsync-docker
+          cache-to: type=gha,mode=max,scope=starsync-docker
 
   homebrew:
     name: Homebrew tap

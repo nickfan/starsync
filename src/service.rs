@@ -219,6 +219,7 @@ impl StarSyncService {
 
     pub fn rebuild_index(&self) -> Result<()> {
         let repos = self.merged_repos()?;
+        self.store.write_catalog(&repos)?;
         if let Some(sqlite) = &self.sqlite {
             sqlite.rebuild(&repos)?;
         }
@@ -487,5 +488,45 @@ mod tests {
         assert_eq!(response.items.len(), 2);
         assert_eq!(response.items[0].repo.full_name, "alice/high");
         assert_eq!(response.items[1].repo.full_name, "alice/low");
+    }
+
+    #[test]
+    fn sync_rebuilds_markdown_catalog_files() {
+        let (dir, service) = test_service();
+        service.apply_remote_repos(vec![remote("demo")]).unwrap();
+        service
+            .patch_meta(
+                &RepoIdentity::new("alice", "demo"),
+                MetaPatch {
+                    tags: Some(vec!["keepers".to_string()]),
+                    ..MetaPatch::default()
+                },
+            )
+            .unwrap();
+
+        let repos_dir = dir.path().join("data/repos");
+        let index = std::fs::read_to_string(repos_dir.join("INDEX.md")).unwrap();
+        assert!(index.contains("kind: repo_index"));
+        assert!(index.contains("[alice/demo](alice/demo/INDEX.md)"));
+
+        let catalog: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(repos_dir.join("catalog.json")).unwrap())
+                .unwrap();
+        assert_eq!(catalog["counts"]["current"], 1);
+        assert_eq!(catalog["items"][0]["tags"][0], "keepers");
+
+        service.apply_remote_repos(Vec::new()).unwrap();
+
+        let catalog: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(repos_dir.join("catalog.json")).unwrap())
+                .unwrap();
+        assert_eq!(catalog["counts"]["current"], 0);
+        assert_eq!(catalog["counts"]["archived"], 1);
+        assert_eq!(catalog["items"][0]["current"], false);
+        assert_eq!(catalog["items"][0]["archived"], true);
+
+        let by_owner = std::fs::read_to_string(repos_dir.join("INDEX.by-owner.md")).unwrap();
+        assert!(by_owner.contains("## A"));
+        assert!(by_owner.contains("_(archived)_"));
     }
 }

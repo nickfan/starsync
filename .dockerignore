@@ -3,6 +3,7 @@
 target
 dist
 vendor
+.buildx-cache*
 
 .env
 .env.*

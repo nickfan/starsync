@@ -83,6 +83,46 @@ Your `.env` file can stay minimal for Docker:
 STARSYNC_GITHUB_TOKEN=github_pat_xxx
 ```
 
+Build the image locally without installing Rust on the host:
+
+```bash
+docker buildx build --load -t starsync:dev .
+docker run --rm starsync:dev --version
+```
+
+The Dockerfile is multi-stage: `cargo-chef` prepares a dependency recipe,
+dependency compilation is cached in a separate layer, the final binary is built
+inside `rust:${RUST_VERSION}-bookworm` with `RUST_VERSION=1` by default, and the
+runtime image is Debian slim with only CA certificates and the `starsync` binary.
+
+Pin or override the Rust toolchain used inside Docker:
+
+```bash
+docker buildx build --load \
+  --build-arg RUST_VERSION=1 \
+  -t starsync:dev .
+```
+
+If Docker Hub access is slow or blocked, point the base image pulls at a mirror
+that preserves Docker Hub's `library/` image names:
+
+```bash
+docker buildx build --load \
+  --build-arg BASE_IMAGE_REGISTRY=mirror.gcr.io/library/ \
+  -t starsync:dev .
+```
+
+For faster repeated local builds, export a BuildKit cache directory:
+
+```bash
+docker buildx build --load -t starsync:dev \
+  --cache-from type=local,src=.buildx-cache \
+  --cache-to type=local,dest=.buildx-cache-new,mode=max .
+
+rm -rf .buildx-cache
+mv .buildx-cache-new .buildx-cache
+```
+
 ### Cargo
 
 ```bash
@@ -297,6 +337,13 @@ Refresh the optional SQLite FTS index from Markdown and mirror state:
 starsync index rebuild
 ```
 
+This also refreshes the engine-independent local catalogs under `repos/`:
+
+- `INDEX.md` - human-readable top-level index with YAML front matter.
+- `catalog.yaml` and `catalog.json` - machine-readable fused repo + meta catalog.
+- `INDEX.by-repo.md` - Markdown index grouped by repository-name initial.
+- `INDEX.by-owner.md` - Markdown index grouped by owner initial.
+
 Fetch README snippets for current starred repositories:
 
 ```bash
@@ -309,9 +356,23 @@ Default paths:
 
 ```text
 ~/.starsync/data/repos/INDEX.md
+~/.starsync/data/repos/catalog.yaml
+~/.starsync/data/repos/catalog.json
+~/.starsync/data/repos/INDEX.by-repo.md
+~/.starsync/data/repos/INDEX.by-owner.md
 ~/.starsync/data/repos/{owner}/{repo}/INDEX.md
 ~/.starsync/state/mirror.json
 ~/.starsync/state/starsync.db
+```
+
+Top-level catalog files are derived data and are rebuilt by `sync`, `meta edit`,
+`meta delete`, `enrich readme`, and `index rebuild`. They make quick local
+lookup possible without SQLite or a running REST service:
+
+```bash
+grep -R "keepers" ~/.starsync/data/repos
+jq '.items[] | select(.owner == "nickfan") | .full_name' ~/.starsync/data/repos/catalog.json
+jq '.items[] | select(.current == false or .archived == true) | .full_name' ~/.starsync/data/repos/catalog.json
 ```
 
 The per-repo `INDEX.md` stores local metadata in YAML front matter:
@@ -464,6 +525,11 @@ Repository variable: DOCKERHUB_USERNAME
 Repository variable: DOCKER_PLATFORMS=linux/amd64
 Repository secret:   DOCKERHUB_TOKEN
 ```
+
+Docker images are built through the multi-stage Dockerfile, so release image
+builds do not depend on the GitHub runner's Rust version. The workflow pushes
+GHCR and Docker Hub tags from one Buildx build when Docker Hub credentials are
+available, and uses GitHub Actions layer cache for Cargo and Docker layers.
 
 `DOCKER_PLATFORMS` defaults to `linux/amd64`. Set it to `linux/amd64,linux/arm64` when you want multi-architecture Docker images; the first multi-arch build takes longer because Rust is compiled inside Docker for each target platform.
 

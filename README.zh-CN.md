@@ -83,6 +83,45 @@ Docker 场景下 `.env` 可以很简单：
 STARSYNC_GITHUB_TOKEN=github_pat_xxx
 ```
 
+也可以只依赖 Docker 在本地构建镜像，不需要宿主机安装 Rust：
+
+```bash
+docker buildx build --load -t starsync:dev .
+docker run --rm starsync:dev --version
+```
+
+Dockerfile 是 multi-stage 构建：`cargo-chef` 先生成依赖 recipe，依赖编译单独成缓存层，
+最终 binary 在 `rust:${RUST_VERSION}-bookworm` 里构建，默认 `RUST_VERSION=1`；
+runtime 镜像只保留 Debian slim、CA certificates 和 `starsync` 二进制。
+
+可以固定或覆盖 Docker 内使用的 Rust toolchain：
+
+```bash
+docker buildx build --load \
+  --build-arg RUST_VERSION=1 \
+  -t starsync:dev .
+```
+
+如果 Docker Hub 访问慢或被网络阻断，可以把基础镜像切到保留 Docker Hub
+`library/` 命名的镜像源：
+
+```bash
+docker buildx build --load \
+  --build-arg BASE_IMAGE_REGISTRY=mirror.gcr.io/library/ \
+  -t starsync:dev .
+```
+
+反复本地构建时，可以导出 BuildKit 缓存目录提速：
+
+```bash
+docker buildx build --load -t starsync:dev \
+  --cache-from type=local,src=.buildx-cache \
+  --cache-to type=local,dest=.buildx-cache-new,mode=max .
+
+rm -rf .buildx-cache
+mv .buildx-cache-new .buildx-cache
+```
+
 ### Cargo
 
 ```bash
@@ -297,6 +336,13 @@ starsync meta delete owner repo
 starsync index rebuild
 ```
 
+这也会刷新 `repos/` 下不依赖 SQLite/REST 引擎的本地清单：
+
+- `INDEX.md`：带 YAML front matter 的顶层人读索引。
+- `catalog.yaml` 和 `catalog.json`：融合 repo + meta 的机器可读总清单。
+- `INDEX.by-repo.md`：按 repo 名首字母分组的 Markdown 索引。
+- `INDEX.by-owner.md`：按 owner 首字母分组的 Markdown 索引。
+
 为当前 starred repos 抓取 README 摘要：
 
 ```bash
@@ -309,9 +355,23 @@ starsync enrich readme --limit 50
 
 ```text
 ~/.starsync/data/repos/INDEX.md
+~/.starsync/data/repos/catalog.yaml
+~/.starsync/data/repos/catalog.json
+~/.starsync/data/repos/INDEX.by-repo.md
+~/.starsync/data/repos/INDEX.by-owner.md
 ~/.starsync/data/repos/{owner}/{repo}/INDEX.md
 ~/.starsync/state/mirror.json
 ~/.starsync/state/starsync.db
+```
+
+顶层清单文件是派生数据，会在 `sync`、`meta edit`、`meta delete`、
+`enrich readme`、`index rebuild` 后重建。这样即使没有 SQLite 或 REST 服务，
+也能直接用本地文件快速检索：
+
+```bash
+grep -R "keepers" ~/.starsync/data/repos
+jq '.items[] | select(.owner == "nickfan") | .full_name' ~/.starsync/data/repos/catalog.json
+jq '.items[] | select(.current == false or .archived == true) | .full_name' ~/.starsync/data/repos/catalog.json
 ```
 
 单个 repo 的 `INDEX.md` 用 YAML front matter 保存本地 meta：
@@ -464,6 +524,11 @@ Repository variable: DOCKERHUB_USERNAME
 Repository variable: DOCKER_PLATFORMS=linux/amd64
 Repository secret:   DOCKERHUB_TOKEN
 ```
+
+Docker 镜像会通过 multi-stage Dockerfile 构建，所以 release 镜像构建不依赖 GitHub
+runner 上预装的 Rust 版本。如果 Docker Hub credentials 可用，workflow 会用一次
+Buildx 构建同时推送 GHCR 和 Docker Hub tags，并使用 GitHub Actions layer cache
+缓存 Cargo 和 Docker 层。
 
 `DOCKER_PLATFORMS` 默认是 `linux/amd64`。如果需要多架构镜像，可以改成 `linux/amd64,linux/arm64`；第一次 multi-arch 构建会更慢，因为 Rust 会在 Docker 里按目标平台分别编译。
 
