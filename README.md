@@ -505,14 +505,27 @@ This repository includes GitHub Actions for CI and tagged releases:
 - `.github/workflows/release.yml` runs on tags like `v0.1.0` or manual dispatch.
 - The release workflow creates or updates the GitHub Release, uploads a Linux binary tarball, uploads a vendored source tarball, publishes GHCR images, optionally publishes Docker Hub images, and optionally updates a Homebrew/Linuxbrew tap formula.
 
-Create the next release by pushing a version tag that matches `Cargo.toml`:
+Create the next release with one local command from a clean `master` checkout:
+
+```bash
+scripts/bump-version.sh 0.1.1
+```
+
+The script updates `Cargo.toml` and `Cargo.lock`, commits the bump, and pushes
+`master`. After CI passes, `.github/workflows/auto-release.yml` creates the
+matching `v0.1.1` tag if it does not already exist and dispatches
+`.github/workflows/release.yml`. The release workflow then publishes GitHub
+Release assets, GHCR images, Docker Hub images when configured, and the
+Homebrew/Linuxbrew tap formula.
+
+Manual tag releases still work when the tag matches `Cargo.toml`:
 
 ```bash
 git tag v0.1.1
 git push origin v0.1.1
 ```
 
-Or republish the current Cargo version manually:
+Or republish an existing Cargo version manually:
 
 ```bash
 gh workflow run release.yml -f version=v0.1.0

@@ -1,0 +1,85 @@
+name: Auto Release
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    branches:
+      - master
+    types:
+      - completed
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  tag-and-dispatch:
+    name: Tag version and dispatch release
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+
+    steps:
+      - name: Checkout completed revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Resolve Cargo version
+        id: version
+        run: |
+          set -euo pipefail
+          version_number="$(python3 - <<'PY'
+          import tomllib
+          with open("Cargo.toml", "rb") as fh:
+              print(tomllib.load(fh)["package"]["version"])
+          PY
+          )"
+          version="v${version_number#v}"
+          if [[ ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Unsupported Cargo.toml version for release tag: ${version}" >&2
+            exit 1
+          fi
+          {
+            echo "version=${version}"
+            echo "version_number=${version#v}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Check whether tag already exists
+        id: tag
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_VERSION}" >/dev/null 2>&1; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+            echo "Tag ${RELEASE_VERSION} already exists; skipping automatic release."
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create release tag
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${RELEASE_VERSION}" "${HEAD_SHA}" -m "starsync ${RELEASE_VERSION}"
+          git push origin "refs/tags/${RELEASE_VERSION}"
+
+      - name: Dispatch release workflow
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml \
+            --ref "${RELEASE_VERSION}" \
+            -f "version=${RELEASE_VERSION}" \
+            -f "publish_docker=true" \
+            -f "publish_homebrew=true"
