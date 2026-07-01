@@ -194,11 +194,50 @@ fn add_match(
 fn make_snippet(value: &str, query: &str) -> String {
     let lower = value.to_ascii_lowercase();
     let Some(index) = lower.find(query) else {
-        return value.chars().take(180).collect();
+        return value
+            .chars()
+            .take(180)
+            .collect::<String>()
+            .replace('\n', " ");
     };
-    let start = index.saturating_sub(60);
-    let end = (index + query.len() + 120).min(value.len());
+    let match_start = floor_char_boundary(value, index);
+    let match_end = ceil_char_boundary(value, index + query.len());
+    let start = char_context_start(value, match_start, 60);
+    let end = char_context_end(value, match_end, 120);
     value[start..end].replace('\n', " ")
+}
+
+fn floor_char_boundary(value: &str, mut index: usize) -> usize {
+    index = index.min(value.len());
+    while !value.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn ceil_char_boundary(value: &str, mut index: usize) -> usize {
+    index = index.min(value.len());
+    while !value.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
+fn char_context_start(value: &str, index: usize, max_chars: usize) -> usize {
+    value[..index]
+        .char_indices()
+        .rev()
+        .nth(max_chars)
+        .map(|(byte_index, _)| byte_index)
+        .unwrap_or(0)
+}
+
+fn char_context_end(value: &str, index: usize, max_chars: usize) -> usize {
+    value[index..]
+        .char_indices()
+        .nth(max_chars)
+        .map(|(byte_index, _)| index + byte_index)
+        .unwrap_or(value.len())
 }
 
 fn page_items<T>(items: Vec<T>, filters: &RepoFilters) -> ListResponse<T> {
@@ -276,5 +315,24 @@ mod tests {
         assert_eq!(results.items.len(), 1);
         assert_eq!(results.total, 2);
         assert_eq!(results.next_cursor, Some("1".to_string()));
+    }
+
+    #[test]
+    fn search_snippet_handles_multibyte_text() {
+        let mut repo = repo("demo", &[]);
+        repo.description = Some("可视化大屏，地理轮廓精确呈现3D地图，支持 Rust 插件".to_string());
+        let filters = RepoFilters {
+            q: Some("rust".to_string()),
+            ..RepoFilters::default()
+        };
+
+        let results = search_repos(vec![repo], &filters);
+
+        assert_eq!(results.items.len(), 1);
+        assert!(results.items[0]
+            .snippet
+            .as_deref()
+            .unwrap()
+            .contains("Rust"));
     }
 }
