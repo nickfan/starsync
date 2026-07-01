@@ -241,7 +241,21 @@ Search local and remote fields:
 ```bash
 starsync search retrieval
 starsync search "agent framework" --archived true
+starsync search 'owner:nickfan AND name:^T'
+starsync search '(language:Rust AND topic:cli) OR tag:agent'
+starsync search 'language:Rust -topic:web stars:>=1000'
 ```
+
+Search query syntax follows GitHub-style qualifiers where possible:
+
+- Boolean operators: `AND`, `OR`, `NOT`, parentheses, and implicit `AND` between adjacent terms.
+- Negation shorthand: `-topic:web` is the same as `NOT topic:web`.
+- Qualifiers: `owner:`, `user:`, `org:`, `name:`, `repo:`, `language:`, `topic:`, `tag:`, `status:`, `archived:`, `current:`, `is:`, `stars:`, `description:`, `summary:`, `notes:`, `readme:`.
+- Local prefix matching: `name:^T` or `name:T*`.
+- Equality forms: `owner:nickfan`, `owner=nickfan`, and `owner:=nickfan`.
+- Numeric comparisons for stars: `stars:>=1000`, `stars:<500`, `stars:100..500`.
+
+GitHub's own starred list endpoint has only basic pagination/sort filters, so StarSync evaluates these richer expressions locally against the synced mirror plus Markdown meta.
 
 Edit local metadata only:
 

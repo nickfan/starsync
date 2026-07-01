@@ -59,9 +59,11 @@ impl StarSyncService {
     }
 
     pub fn search_repos(&self, filters: RepoFilters) -> Result<ListResponse<SearchResult>> {
-        if let Some(sqlite) = &self.sqlite {
-            if let Ok(Some(result)) = sqlite.search(&filters) {
-                return Ok(result);
+        if !search::query_uses_structured_syntax(filters.q.as_deref()) {
+            if let Some(sqlite) = &self.sqlite {
+                if let Ok(Some(result)) = sqlite.search(&filters) {
+                    return Ok(result);
+                }
             }
         }
         let repos = self.merged_repos()?;
@@ -434,5 +436,29 @@ mod tests {
             response.items[0].html_url.as_deref(),
             Some("https://github.com/alice/demo")
         );
+    }
+
+    #[test]
+    fn structured_search_bypasses_sqlite_fts_for_field_filters() {
+        let (_dir, service) = test_service();
+        let mut tooling = remote("Toolbox");
+        tooling.language = Some("Rust".to_string());
+        tooling.topics = vec!["cli".to_string()];
+        tooling.stargazers_count = 1200;
+        let mut web = remote("webapp");
+        web.language = Some("Rust".to_string());
+        web.topics = vec!["web".to_string()];
+        web.stargazers_count = 2200;
+        service.apply_remote_repos(vec![tooling, web]).unwrap();
+
+        let response = service
+            .search_repos(RepoFilters {
+                q: Some("language:Rust AND name:^T stars:>=1000".to_string()),
+                ..RepoFilters::default()
+            })
+            .unwrap();
+
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].repo.full_name, "alice/Toolbox");
     }
 }

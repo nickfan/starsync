@@ -241,7 +241,21 @@ starsync list --language Rust --tag ai --sort updated --direction desc
 ```bash
 starsync search retrieval
 starsync search "agent framework" --archived true
+starsync search 'owner:nickfan AND name:^T'
+starsync search '(language:Rust AND topic:cli) OR tag:agent'
+starsync search 'language:Rust -topic:web stars:>=1000'
 ```
+
+搜索语法尽量贴近 GitHub qualifier 风格：
+
+- 布尔操作：`AND`、`OR`、`NOT`、括号，以及相邻条件的隐式 `AND`。
+- 否定简写：`-topic:web` 等价于 `NOT topic:web`。
+- Qualifiers：`owner:`、`user:`、`org:`、`name:`、`repo:`、`language:`、`topic:`、`tag:`、`status:`、`archived:`、`current:`、`is:`、`stars:`、`description:`、`summary:`、`notes:`、`readme:`。
+- 本地前缀匹配：`name:^T` 或 `name:T*`。
+- 等值写法：`owner:nickfan`、`owner=nickfan`、`owner:=nickfan`。
+- stars 数值比较：`stars:>=1000`、`stars:<500`、`stars:100..500`。
+
+GitHub 官方 starred list endpoint 本身只提供基础分页和 sort/direction，所以这些更丰富的表达式由 StarSync 在本地 synced mirror 加 Markdown meta 上执行。
 
 只编辑本地 meta，不影响 GitHub：
 

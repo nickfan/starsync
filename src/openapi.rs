@@ -52,7 +52,7 @@ pub fn openapi_json() -> Value {
                 "get": {
                     "operationId": "searchRepos",
                     "parameters": list_parameters(),
-                    "responses": {"200": {"description": "Full-text search results with snippets and matched fields"}}
+                    "responses": {"200": {"description": "Full-text or structured expression search results with snippets and matched fields"}}
                 }
             },
             "/sync": {
@@ -123,7 +123,7 @@ fn list_parameters() -> Value {
         {"name": "tag", "in": "query", "schema": {"type": "string"}},
         {"name": "status", "in": "query", "schema": {"type": "string"}},
         {"name": "archived", "in": "query", "schema": {"type": "boolean"}},
-        {"name": "q", "in": "query", "schema": {"type": "string"}}
+        {"name": "q", "in": "query", "description": "Full-text query or GitHub-style structured expression, for example owner:nickfan AND name:^T", "schema": {"type": "string"}}
     ])
 }
 
