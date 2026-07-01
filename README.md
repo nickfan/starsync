@@ -257,6 +257,24 @@ Search query syntax follows GitHub-style qualifiers where possible:
 
 GitHub's own starred list endpoint has only basic pagination/sort filters, so StarSync evaluates these richer expressions locally against the synced mirror plus Markdown meta.
 
+Sorting is separate from the query expression: filters decide which repos match, and `--sort` / `--direction` decide result order. Supported sort fields are `created` (GitHub starred time), `updated` (repository updated time), `name` (full repo name), and `stars` (stargazer count).
+
+Typical search/list cases:
+
+```bash
+# Most-starred Rust repos that are not web-topic repos
+starsync search 'language:Rust -topic:web' --sort stars --direction desc --limit 20
+
+# Recently starred repos whose name starts with T
+starsync search 'name:^T' --sort created --direction desc --limit 20
+
+# Alphabetical slice for one owner
+starsync list --owner nickfan --sort name --direction asc --limit 50
+
+# Page through local meta and GitHub topic matches
+starsync search 'topic:cli OR tag:agent' --sort updated --direction desc --page 2 --per-page 25
+```
+
 Edit local metadata only:
 
 ```bash
@@ -362,6 +380,8 @@ Example:
 ```bash
 curl 'http://127.0.0.1:8989/repos?limit=20&language=Rust&sort=updated&direction=desc'
 curl 'http://127.0.0.1:8989/search?q=retrieval&tag=ai'
+curl 'http://127.0.0.1:8989/search?q=language:Rust%20-topic:web&sort=stars&direction=desc&limit=20'
+curl 'http://127.0.0.1:8989/repos?owner=nickfan&sort=name&direction=asc&limit=50'
 ```
 
 Export OpenAPI 3.1:

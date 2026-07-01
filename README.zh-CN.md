@@ -257,6 +257,24 @@ starsync search 'language:Rust -topic:web stars:>=1000'
 
 GitHub 官方 starred list endpoint 本身只提供基础分页和 sort/direction，所以这些更丰富的表达式由 StarSync 在本地 synced mirror 加 Markdown meta 上执行。
 
+排序和查询表达式是两件事：表达式决定哪些 repo 命中，`--sort` / `--direction` 决定命中结果怎么排序。支持的排序字段包括 `created`（GitHub starred 时间）、`updated`（repo 更新时间）、`name`（完整 repo 名）、`stars`（stargazer 数）。
+
+典型搜索/列表场景：
+
+```bash
+# star 数最高的 Rust repo，并排除 web topic
+starsync search 'language:Rust -topic:web' --sort stars --direction desc --limit 20
+
+# 最近 star 的、名字以 T 开头的 repo
+starsync search 'name:^T' --sort created --direction desc --limit 20
+
+# 查看某个 owner 下按名称排序的结果
+starsync list --owner nickfan --sort name --direction asc --limit 50
+
+# 翻页浏览本地 meta 和 GitHub topic 混合命中的结果
+starsync search 'topic:cli OR tag:agent' --sort updated --direction desc --page 2 --per-page 25
+```
+
 只编辑本地 meta，不影响 GitHub：
 
 ```bash
@@ -362,6 +380,8 @@ GET  /openapi.json
 ```bash
 curl 'http://127.0.0.1:8989/repos?limit=20&language=Rust&sort=updated&direction=desc'
 curl 'http://127.0.0.1:8989/search?q=retrieval&tag=ai'
+curl 'http://127.0.0.1:8989/search?q=language:Rust%20-topic:web&sort=stars&direction=desc&limit=20'
+curl 'http://127.0.0.1:8989/repos?owner=nickfan&sort=name&direction=asc&limit=50'
 ```
 
 导出 OpenAPI 3.1：

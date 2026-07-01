@@ -59,7 +59,9 @@ impl StarSyncService {
     }
 
     pub fn search_repos(&self, filters: RepoFilters) -> Result<ListResponse<SearchResult>> {
-        if !search::query_uses_structured_syntax(filters.q.as_deref()) {
+        let requires_merged_search =
+            filters.sort.is_some() || search::query_uses_structured_syntax(filters.q.as_deref());
+        if !requires_merged_search {
             if let Some(sqlite) = &self.sqlite {
                 if let Ok(Some(result)) = sqlite.search(&filters) {
                     return Ok(result);
@@ -460,5 +462,30 @@ mod tests {
 
         assert_eq!(response.items.len(), 1);
         assert_eq!(response.items[0].repo.full_name, "alice/Toolbox");
+    }
+
+    #[test]
+    fn sorted_search_uses_merged_results_instead_of_sqlite_rank() {
+        let (_dir, service) = test_service();
+        let mut low = remote("low");
+        low.description = Some("agent toolkit".to_string());
+        low.stargazers_count = 10;
+        let mut high = remote("high");
+        high.description = Some("agent toolkit".to_string());
+        high.stargazers_count = 100;
+        service.apply_remote_repos(vec![low, high]).unwrap();
+
+        let response = service
+            .search_repos(RepoFilters {
+                q: Some("agent".to_string()),
+                sort: Some(crate::models::RepoSort::Stars),
+                direction: Some(SortDirection::Desc),
+                ..RepoFilters::default()
+            })
+            .unwrap();
+
+        assert_eq!(response.items.len(), 2);
+        assert_eq!(response.items[0].repo.full_name, "alice/high");
+        assert_eq!(response.items[1].repo.full_name, "alice/low");
     }
 }

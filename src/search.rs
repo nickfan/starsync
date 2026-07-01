@@ -15,12 +15,7 @@ pub fn search_repos(repos: Vec<RepoView>, filters: &RepoFilters) -> ListResponse
         .filter(|repo| matches_filter_fields(repo, filters))
         .filter_map(|repo| score_repo(repo, &query))
         .collect();
-    results.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| a.repo.full_name.cmp(&b.repo.full_name))
-    });
+    sort_search_results(&mut results, filters);
     page_items(results, filters)
 }
 
@@ -105,17 +100,46 @@ fn sort_repos(repos: &mut [RepoView], filters: &RepoFilters) {
     let direction = filters.direction.unwrap_or_default();
     let sort = filters.sort.unwrap_or_default();
     repos.sort_by(|a, b| {
-        let ordering = match sort {
-            RepoSort::Created => a.starred_at.cmp(&b.starred_at),
-            RepoSort::Updated => a.updated_at.cmp(&b.updated_at),
-            RepoSort::Name => a.full_name.cmp(&b.full_name),
-            RepoSort::Stars => a.stargazers_count.cmp(&b.stargazers_count),
-        };
+        let ordering = repo_ordering(a, b, sort);
         match direction {
             SortDirection::Asc => ordering,
             SortDirection::Desc => ordering.reverse(),
         }
     });
+}
+
+fn sort_search_results(results: &mut [SearchResult], filters: &RepoFilters) {
+    let Some(sort) = filters.sort else {
+        results.sort_by(search_score_ordering);
+        return;
+    };
+    let direction = filters.direction.unwrap_or_default();
+    results.sort_by(|a, b| {
+        let ordering = repo_ordering(&a.repo, &b.repo, sort);
+        let ordering = match direction {
+            SortDirection::Asc => ordering,
+            SortDirection::Desc => ordering.reverse(),
+        };
+        ordering
+            .then_with(|| search_score_ordering(a, b))
+            .then_with(|| a.repo.full_name.cmp(&b.repo.full_name))
+    });
+}
+
+fn repo_ordering(a: &RepoView, b: &RepoView, sort: RepoSort) -> Ordering {
+    match sort {
+        RepoSort::Created => a.starred_at.cmp(&b.starred_at),
+        RepoSort::Updated => a.updated_at.cmp(&b.updated_at),
+        RepoSort::Name => a.full_name.cmp(&b.full_name),
+        RepoSort::Stars => a.stargazers_count.cmp(&b.stargazers_count),
+    }
+}
+
+fn search_score_ordering(a: &SearchResult, b: &SearchResult) -> Ordering {
+    b.score
+        .partial_cmp(&a.score)
+        .unwrap_or(Ordering::Equal)
+        .then_with(|| a.repo.full_name.cmp(&b.repo.full_name))
 }
 
 #[derive(Clone, Debug)]
@@ -835,6 +859,46 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("Rust"));
+    }
+
+    #[test]
+    fn search_results_support_explicit_sorting() {
+        let mut low = repo_for("alice", "low", &[]);
+        low.description = Some("agent toolkit".to_string());
+        low.stargazers_count = Some(10);
+        let mut high = repo_for("alice", "high", &[]);
+        high.description = Some("agent toolkit".to_string());
+        high.stargazers_count = Some(100);
+        let filters = RepoFilters {
+            q: Some("agent".to_string()),
+            sort: Some(RepoSort::Stars),
+            direction: Some(SortDirection::Desc),
+            ..RepoFilters::default()
+        };
+
+        let results = search_repos(vec![low, high], &filters);
+
+        assert_eq!(results.items[0].repo.name, "high");
+        assert_eq!(results.items[1].repo.name, "low");
+    }
+
+    #[test]
+    fn search_results_sort_by_name_ascending() {
+        let mut beta = repo_for("alice", "beta", &[]);
+        beta.description = Some("agent toolkit".to_string());
+        let mut alpha = repo_for("alice", "alpha", &[]);
+        alpha.description = Some("agent toolkit".to_string());
+        let filters = RepoFilters {
+            q: Some("agent".to_string()),
+            sort: Some(RepoSort::Name),
+            direction: Some(SortDirection::Asc),
+            ..RepoFilters::default()
+        };
+
+        let results = search_repos(vec![beta, alpha], &filters);
+
+        assert_eq!(results.items[0].repo.name, "alpha");
+        assert_eq!(results.items[1].repo.name, "beta");
     }
 
     #[test]
