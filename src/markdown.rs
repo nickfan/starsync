@@ -118,7 +118,7 @@ impl MarkdownStore {
         };
 
         let yaml = serde_yaml::to_string(&catalog)?;
-        fs::write(self.catalog_yaml_path(), format!("{yaml}"))
+        fs::write(self.catalog_yaml_path(), yaml)
             .with_context(|| format!("failed to write {}", self.catalog_yaml_path().display()))?;
 
         let json = serde_json::to_string_pretty(&catalog)?;
