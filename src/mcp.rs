@@ -1,5 +1,7 @@
 use crate::{
-    models::{MetaPatch, RepoFilters, RepoIdentity},
+    models::{
+        EventSubscriptionCreate, EventSubscriptionPatch, MetaPatch, RepoFilters, RepoIdentity,
+    },
     service::StarSyncService,
 };
 use anyhow::{anyhow, Result};
@@ -117,9 +119,39 @@ async fn call_tool(service: &StarSyncService, params: Value) -> Result<Value> {
                 .map(|value| value as usize);
             json!({ "updated": service.enrich_readmes(limit).await? })
         }
-        "list_recent_events" => json!({
-            "message": "Live events are available over REST SSE at GET /events."
-        }),
+        "list_recent_events" => {
+            let limit = arguments
+                .get("limit")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize)
+                .unwrap_or(50);
+            json!(service.recent_events(limit)?)
+        }
+        "list_event_subscriptions" => json!(service.list_event_subscriptions()),
+        "create_event_subscription" => {
+            let create: EventSubscriptionCreate = serde_json::from_value(arguments)?;
+            json!(service.create_event_subscription(create)?)
+        }
+        "update_event_subscription" => {
+            let id = arguments
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("update_event_subscription requires id"))?;
+            let patch: EventSubscriptionPatch = serde_json::from_value(
+                arguments
+                    .get("patch")
+                    .cloned()
+                    .ok_or_else(|| anyhow!("update_event_subscription requires patch"))?,
+            )?;
+            json!(service.patch_event_subscription(id, patch)?)
+        }
+        "delete_event_subscription" => {
+            let id = arguments
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("delete_event_subscription requires id"))?;
+            json!(service.delete_event_subscription(id)?)
+        }
         other => return Err(anyhow!("unknown tool: {other}")),
     };
     Ok(json!({
@@ -230,7 +262,23 @@ fn tools() -> Value {
         ),
         tool(
             "list_recent_events",
-            "Return event guidance; live event stream is available over REST SSE."
+            "Return recent durable StarSync events from the local event log."
+        ),
+        tool(
+            "list_event_subscriptions",
+            "List configured webhook event subscriptions."
+        ),
+        tool(
+            "create_event_subscription",
+            "Create a webhook subscription for event names such as repo.added, meta.changed, or *."
+        ),
+        tool(
+            "update_event_subscription",
+            "Patch a webhook subscription by id."
+        ),
+        tool(
+            "delete_event_subscription",
+            "Delete a webhook subscription by id."
         )
     ])
 }

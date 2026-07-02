@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: starsync
+  namespace: starsync
+  labels:
+    app.kubernetes.io/name: starsync
+    app.kubernetes.io/part-of: starsync
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: starsync
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: starsync
+        app.kubernetes.io/part-of: starsync
+    spec:
+      securityContext:
+        fsGroup: 10001
+      containers:
+        - name: starsync
+          image: ghcr.io/nickfan/starsync:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8989
+          envFrom:
+            - configMapRef:
+                name: starsync-config
+            - secretRef:
+                name: starsync-secret
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: state
+              mountPath: /state
+            - name: index
+              mountPath: /index
+            - name: ui
+              mountPath: /ui
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: starsync-data
+        - name: state
+          persistentVolumeClaim:
+            claimName: starsync-state
+        - name: index
+          persistentVolumeClaim:
+            claimName: starsync-index
+        - name: ui
+          emptyDir: {}

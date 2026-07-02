@@ -1,0 +1,69 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: starsync-sync
+  namespace: starsync
+  labels:
+    app.kubernetes.io/name: starsync
+    app.kubernetes.io/component: sync
+    app.kubernetes.io/part-of: starsync
+spec:
+  schedule: "17 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            fsGroup: 10001
+          containers:
+            - name: sync
+              image: ghcr.io/nickfan/starsync:latest
+              imagePullPolicy: IfNotPresent
+              args:
+                - sync
+              envFrom:
+                - configMapRef:
+                    name: starsync-config
+                - secretRef:
+                    name: starsync-secret
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 1000m
+                  memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                runAsUser: 10001
+                runAsGroup: 10001
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                - name: state
+                  mountPath: /state
+                - name: index
+                  mountPath: /index
+                - name: ui
+                  mountPath: /ui
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: starsync-data
+            - name: state
+              persistentVolumeClaim:
+                claimName: starsync-state
+            - name: index
+              persistentVolumeClaim:
+                claimName: starsync-index
+            - name: ui
+              emptyDir: {}

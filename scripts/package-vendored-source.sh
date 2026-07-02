@@ -20,7 +20,7 @@ mkdir -p "${DIST_DIR}" "${PACKAGE_DIR}"
 rsync -a \
   --exclude '.git' \
   --exclude 'target' \
-  --exclude 'dist' \
+  --exclude '/dist' \
   --exclude 'Formula' \
   --include '.env.example' \
   --exclude '.env' \

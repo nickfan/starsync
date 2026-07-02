@@ -1,0 +1,21 @@
+{{- range $name, $cfg := .Values.persistence }}
+{{- if $cfg.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "starsync.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "starsync.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name | quote }}
+spec:
+  accessModes:
+    {{- toYaml $cfg.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ $cfg.size | quote }}
+  {{- if $cfg.storageClass }}
+  storageClassName: {{ $cfg.storageClass | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}

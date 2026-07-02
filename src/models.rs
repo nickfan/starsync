@@ -238,6 +238,52 @@ pub enum StarSyncEvent {
     Error { message: String },
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EventEnvelope {
+    pub id: String,
+    pub name: String,
+    pub emitted_at: DateTime<Utc>,
+    pub event: StarSyncEvent,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct EventSubscriptionCreate {
+    pub url: String,
+    #[serde(default)]
+    pub events: Vec<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub secret: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct EventSubscriptionPatch {
+    pub url: Option<String>,
+    pub events: Option<Vec<String>>,
+    pub enabled: Option<bool>,
+    pub secret: Option<Option<String>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EventSubscriptionView {
+    pub id: String,
+    pub url: String,
+    pub events: Vec<String>,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub failure_count: u64,
+    pub last_delivery: Option<WebhookDeliveryState>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WebhookDeliveryState {
+    pub delivered_at: DateTime<Utc>,
+    pub success: bool,
+    pub status: Option<u16>,
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MetaPatch {
     pub tags: Option<Vec<String>>,

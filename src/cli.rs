@@ -34,6 +34,10 @@ pub struct ConfigArgs {
     pub data_dir: Option<PathBuf>,
     #[arg(long, global = true, env = "STARSYNC_STATE_DIR")]
     pub state_dir: Option<PathBuf>,
+    #[arg(long, global = true, env = "STARSYNC_SEARCH_INDEX_DIR")]
+    pub search_index_dir: Option<PathBuf>,
+    #[arg(long, global = true, env = "STARSYNC_UI_DIR")]
+    pub ui_dir: Option<PathBuf>,
     #[arg(long, global = true, env = "STARSYNC_GITHUB_TOKEN")]
     pub github_token: Option<String>,
     #[arg(long, global = true, env = "STARSYNC_BIND")]
@@ -42,8 +46,10 @@ pub struct ConfigArgs {
     pub storage_backend: Option<String>,
     #[arg(long, global = true, env = "STARSYNC_GIT_REMOTE")]
     pub git_remote: Option<String>,
-    #[arg(long, global = true, env = "STARSYNC_SQLITE_ENABLED")]
-    pub sqlite_enabled: Option<bool>,
+    #[arg(long, global = true, env = "STARSYNC_UI_ENABLED")]
+    pub ui_enabled: Option<bool>,
+    #[arg(long, global = true, env = "STARSYNC_UI_AUTO_EXTRACT")]
+    pub ui_auto_extract: Option<bool>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -60,7 +66,7 @@ pub enum Command {
         #[command(subcommand)]
         command: MetaCommand,
     },
-    Serve,
+    Serve(ServeArgs),
     Mcp,
     Storage {
         #[command(subcommand)]
@@ -147,6 +153,16 @@ pub enum MetaCommand {
     },
 }
 
+#[derive(Args, Debug, Default)]
+pub struct ServeArgs {
+    #[arg(long)]
+    pub no_ui: bool,
+    #[arg(long)]
+    pub ui_dir: Option<PathBuf>,
+    #[arg(long)]
+    pub no_ui_extract: bool,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum StorageCommand {
     Pull,
@@ -184,7 +200,10 @@ pub enum IndexCommand {
 
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
-    let config = Config::load(cli.config.into_overrides()?)?;
+    let mut config = Config::load(cli.config.into_overrides()?)?;
+    if let Command::Serve(args) = &cli.command {
+        args.apply_to_config(&mut config);
+    }
     let service = StarSyncService::new(config.clone());
 
     match cli.command {
@@ -193,6 +212,8 @@ pub async fn run() -> Result<()> {
             print_json(&serde_json::json!({
                 "data_dir": config.data_dir,
                 "repos_dir": config.repos_dir(),
+                "search_index_dir": config.search_index_dir(),
+                "ui_dir": config.ui_dir,
                 "state_dir": config.state_dir
             }))?;
         }
@@ -234,7 +255,7 @@ pub async fn run() -> Result<()> {
                 print_json(&service.delete_meta(&RepoIdentity::new(owner, repo))?)?;
             }
         },
-        Command::Serve => api::serve(service).await?,
+        Command::Serve(_) => api::serve(service).await?,
         Command::Mcp => mcp::run_stdio(service).await?,
         Command::Storage { command } => match command {
             StorageCommand::Pull => {
@@ -278,6 +299,8 @@ impl ConfigArgs {
             env_file: self.env_file,
             data_dir: self.data_dir,
             state_dir: self.state_dir,
+            search_index_dir: self.search_index_dir,
+            ui_dir: self.ui_dir,
             bind: self.bind,
             github_token: self.github_token,
             storage_backend: self
@@ -286,8 +309,23 @@ impl ConfigArgs {
                 .map(StorageBackendKind::parse)
                 .transpose()?,
             git_remote: self.git_remote,
-            sqlite_enabled: self.sqlite_enabled,
+            ui_enabled: self.ui_enabled,
+            ui_auto_extract: self.ui_auto_extract,
         })
+    }
+}
+
+impl ServeArgs {
+    fn apply_to_config(&self, config: &mut Config) {
+        if self.no_ui {
+            config.ui_enabled = false;
+        }
+        if let Some(ui_dir) = &self.ui_dir {
+            config.ui_dir = ui_dir.clone();
+        }
+        if self.no_ui_extract {
+            config.ui_auto_extract = false;
+        }
     }
 }
 

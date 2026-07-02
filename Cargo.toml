@@ -13,15 +13,21 @@ clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
 dotenvy = "0.15"
 futures-util = "0.3"
+hex = "0.4.3"
+hmac = "0.13.0"
+moka = { version = "0.12", features = ["sync"] }
+pinyin = "0.11.0"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+sha2 = "0.11.0"
+tantivy = "0.26.1"
+tantivy-jieba = "0.20.0"
 tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 toml = "0.8"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 urlencoding = "2"

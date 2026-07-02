@@ -1,0 +1,160 @@
+{{- if .Values.jobs.sync.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "starsync.fullname" . }}-sync
+  labels:
+    {{- include "starsync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sync
+spec:
+  schedule: {{ .Values.jobs.sync.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.jobs.sync.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.jobs.sync.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: {{ include "starsync.serviceAccountName" . }}
+          restartPolicy: OnFailure
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: sync
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - sync
+              envFrom:
+                - configMapRef:
+                    name: {{ include "starsync.fullname" . }}-config
+                {{- if or .Values.secret.existingSecret .Values.secret.githubToken }}
+                - secretRef:
+                    name: {{ include "starsync.secretName" . }}
+                {{- end }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              volumeMounts:
+                - name: data
+                  mountPath: {{ .Values.config.dataDir }}
+                - name: state
+                  mountPath: {{ .Values.config.stateDir }}
+                - name: index
+                  mountPath: {{ .Values.config.searchIndexDir }}
+                - name: ui
+                  mountPath: {{ .Values.config.uiDir }}
+          volumes:
+            - name: data
+              {{- if .Values.persistence.data.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "starsync.fullname" . }}-data
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+            - name: state
+              {{- if .Values.persistence.state.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "starsync.fullname" . }}-state
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+            - name: index
+              {{- if .Values.persistence.index.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "starsync.fullname" . }}-index
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+            - name: ui
+              {{- if .Values.persistence.ui.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "starsync.fullname" . }}-ui
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+{{- end }}
+{{- if .Values.jobs.enrichReadme.enabled }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "starsync.fullname" . }}-enrich-readme
+  labels:
+    {{- include "starsync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: enrich-readme
+spec:
+  schedule: {{ .Values.jobs.enrichReadme.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.jobs.enrichReadme.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.jobs.enrichReadme.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: {{ include "starsync.serviceAccountName" . }}
+          restartPolicy: OnFailure
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: enrich-readme
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - enrich
+                - readme
+                - --limit
+                - {{ .Values.jobs.enrichReadme.limit | quote }}
+              envFrom:
+                - configMapRef:
+                    name: {{ include "starsync.fullname" . }}-config
+                {{- if or .Values.secret.existingSecret .Values.secret.githubToken }}
+                - secretRef:
+                    name: {{ include "starsync.secretName" . }}
+                {{- end }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              volumeMounts:
+                - name: data
+                  mountPath: {{ .Values.config.dataDir }}
+                - name: state
+                  mountPath: {{ .Values.config.stateDir }}
+                - name: index
+                  mountPath: {{ .Values.config.searchIndexDir }}
+                - name: ui
+                  mountPath: {{ .Values.config.uiDir }}
+          volumes:
+            - name: data
+              {{- if .Values.persistence.data.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "starsync.fullname" . }}-data
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+            - name: state
+              {{- if .Values.persistence.state.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "starsync.fullname" . }}-state
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+            - name: index
+              {{- if .Values.persistence.index.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "starsync.fullname" . }}-index
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+            - name: ui
+              {{- if .Values.persistence.ui.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "starsync.fullname" . }}-ui
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+{{- end }}

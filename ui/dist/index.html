@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StarSync</title>
+    <link rel="stylesheet" href="./assets/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">StarSync</p>
+          <h1>Repository Console</h1>
+        </div>
+        <div class="status" id="status">Connecting</div>
+      </header>
+
+      <section class="toolbar" aria-label="Repository actions">
+        <button id="syncButton" type="button">Sync Stars</button>
+        <button id="enrichButton" type="button">Enrich README</button>
+        <a class="button secondary" href="/openapi.yaml">OpenAPI YAML</a>
+      </section>
+
+      <section class="search-panel" aria-label="Search repositories">
+        <div class="search-row">
+          <input
+            id="query"
+            type="search"
+            autocomplete="off"
+            placeholder='Search, e.g. owner:nickfan AND name:T*'
+          />
+          <button id="searchButton" type="button">Search</button>
+        </div>
+        <div class="filters">
+          <label>
+            Owner
+            <input id="owner" autocomplete="off" />
+          </label>
+          <label>
+            Language
+            <input id="language" autocomplete="off" />
+          </label>
+          <label>
+            Tag
+            <input id="tag" autocomplete="off" />
+          </label>
+          <label>
+            Status
+            <input id="repoStatus" autocomplete="off" />
+          </label>
+          <label>
+            Sort
+            <select id="sort">
+              <option value="">Relevance</option>
+              <option value="updated">Updated</option>
+              <option value="created">Starred</option>
+              <option value="name">Name</option>
+              <option value="stars">Stars</option>
+            </select>
+          </label>
+          <label>
+            Direction
+            <select id="direction">
+              <option value="desc">Desc</option>
+              <option value="asc">Asc</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="summary" aria-label="Repository summary">
+        <div>
+          <span id="resultCount">0</span>
+          <small>visible results</small>
+        </div>
+        <div>
+          <span id="nextCursor">-</span>
+          <small>next cursor</small>
+        </div>
+      </section>
+
+      <section class="results" id="results" aria-live="polite"></section>
+    </main>
+    <script src="./assets/app.js" type="module"></script>
+  </body>
+</html>

@@ -10,11 +10,14 @@ use std::{
 pub struct Config {
     pub data_dir: PathBuf,
     pub state_dir: PathBuf,
+    pub search_index_dir: Option<PathBuf>,
+    pub ui_dir: PathBuf,
     pub bind: String,
     pub github_token: Option<String>,
     pub storage_backend: StorageBackendKind,
     pub git_remote: Option<String>,
-    pub sqlite_enabled: bool,
+    pub ui_enabled: bool,
+    pub ui_auto_extract: bool,
 }
 
 impl Config {
@@ -51,11 +54,14 @@ impl Config {
         Self {
             data_dir: home.join(".starsync").join("data"),
             state_dir: home.join(".starsync").join("state"),
+            ui_dir: home.join(".starsync").join("ui"),
             bind: "127.0.0.1:8989".to_string(),
             github_token: None,
             storage_backend: StorageBackendKind::Local,
             git_remote: None,
-            sqlite_enabled: true,
+            search_index_dir: None,
+            ui_enabled: true,
+            ui_auto_extract: true,
         }
     }
 
@@ -67,8 +73,18 @@ impl Config {
         self.state_dir.join("mirror.json")
     }
 
-    pub fn sqlite_file(&self) -> PathBuf {
-        self.state_dir.join("starsync.db")
+    pub fn events_file(&self) -> PathBuf {
+        self.state_dir.join("events.jsonl")
+    }
+
+    pub fn event_subscriptions_file(&self) -> PathBuf {
+        self.state_dir.join("event-subscriptions.json")
+    }
+
+    pub fn search_index_dir(&self) -> PathBuf {
+        self.search_index_dir
+            .clone()
+            .unwrap_or_else(|| self.state_dir.join("search"))
     }
 }
 
@@ -78,11 +94,14 @@ pub struct ConfigOverrides {
     pub env_file: Option<PathBuf>,
     pub data_dir: Option<PathBuf>,
     pub state_dir: Option<PathBuf>,
+    pub search_index_dir: Option<PathBuf>,
+    pub ui_dir: Option<PathBuf>,
     pub bind: Option<String>,
     pub github_token: Option<String>,
     pub storage_backend: Option<StorageBackendKind>,
     pub git_remote: Option<String>,
-    pub sqlite_enabled: Option<bool>,
+    pub ui_enabled: Option<bool>,
+    pub ui_auto_extract: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -106,10 +125,13 @@ impl StorageBackendKind {
 struct FileConfig {
     data_dir: Option<String>,
     state_dir: Option<String>,
+    search_index_dir: Option<String>,
+    ui_dir: Option<String>,
     bind: Option<String>,
-    sqlite_enabled: Option<bool>,
     github: Option<FileGithubConfig>,
     storage: Option<FileStorageConfig>,
+    search: Option<FileSearchConfig>,
+    ui: Option<FileUiConfig>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -121,6 +143,18 @@ struct FileGithubConfig {
 struct FileStorageConfig {
     backend: Option<String>,
     git_remote: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct FileSearchConfig {
+    index_dir: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct FileUiConfig {
+    enabled: Option<bool>,
+    dir: Option<String>,
+    auto_extract: Option<bool>,
 }
 
 fn resolve_config(
@@ -144,11 +178,14 @@ fn apply_file_config(config: &mut Config, file: FileConfig) -> Result<()> {
     if let Some(state_dir) = file.state_dir {
         config.state_dir = expand_path(&state_dir);
     }
+    if let Some(search_index_dir) = file.search_index_dir {
+        config.search_index_dir = Some(expand_path(&search_index_dir));
+    }
+    if let Some(ui_dir) = file.ui_dir {
+        config.ui_dir = expand_path(&ui_dir);
+    }
     if let Some(bind) = file.bind {
         config.bind = bind;
-    }
-    if let Some(sqlite_enabled) = file.sqlite_enabled {
-        config.sqlite_enabled = sqlite_enabled;
     }
     if let Some(github) = file.github {
         if let Some(token) = github.token.filter(|value| !value.is_empty()) {
@@ -163,6 +200,22 @@ fn apply_file_config(config: &mut Config, file: FileConfig) -> Result<()> {
             config.git_remote = Some(git_remote);
         }
     }
+    if let Some(search) = file.search {
+        if let Some(index_dir) = search.index_dir {
+            config.search_index_dir = Some(expand_path(&index_dir));
+        }
+    }
+    if let Some(ui) = file.ui {
+        if let Some(enabled) = ui.enabled {
+            config.ui_enabled = enabled;
+        }
+        if let Some(dir) = ui.dir {
+            config.ui_dir = expand_path(&dir);
+        }
+        if let Some(auto_extract) = ui.auto_extract {
+            config.ui_auto_extract = auto_extract;
+        }
+    }
     Ok(())
 }
 
@@ -172,6 +225,12 @@ fn apply_env_map(config: &mut Config, env_map: &BTreeMap<String, String>) -> Res
     }
     if let Some(value) = env_map.get("STARSYNC_STATE_DIR") {
         config.state_dir = expand_path(value);
+    }
+    if let Some(value) = env_map.get("STARSYNC_SEARCH_INDEX_DIR") {
+        config.search_index_dir = Some(expand_path(value));
+    }
+    if let Some(value) = env_map.get("STARSYNC_UI_DIR") {
+        config.ui_dir = expand_path(value);
     }
     if let Some(value) = env_map.get("STARSYNC_BIND") {
         config.bind = value.clone();
@@ -189,8 +248,11 @@ fn apply_env_map(config: &mut Config, env_map: &BTreeMap<String, String>) -> Res
             config.git_remote = Some(value.clone());
         }
     }
-    if let Some(value) = env_map.get("STARSYNC_SQLITE_ENABLED") {
-        config.sqlite_enabled = parse_bool(value)?;
+    if let Some(value) = env_map.get("STARSYNC_UI_ENABLED") {
+        config.ui_enabled = parse_bool(value)?;
+    }
+    if let Some(value) = env_map.get("STARSYNC_UI_AUTO_EXTRACT") {
+        config.ui_auto_extract = parse_bool(value)?;
     }
     Ok(())
 }
@@ -201,6 +263,12 @@ fn apply_overrides(config: &mut Config, overrides: ConfigOverrides) {
     }
     if let Some(state_dir) = overrides.state_dir {
         config.state_dir = state_dir;
+    }
+    if let Some(search_index_dir) = overrides.search_index_dir {
+        config.search_index_dir = Some(search_index_dir);
+    }
+    if let Some(ui_dir) = overrides.ui_dir {
+        config.ui_dir = ui_dir;
     }
     if let Some(bind) = overrides.bind {
         config.bind = bind;
@@ -214,8 +282,11 @@ fn apply_overrides(config: &mut Config, overrides: ConfigOverrides) {
     if let Some(git_remote) = overrides.git_remote {
         config.git_remote = Some(git_remote);
     }
-    if let Some(sqlite_enabled) = overrides.sqlite_enabled {
-        config.sqlite_enabled = sqlite_enabled;
+    if let Some(ui_enabled) = overrides.ui_enabled {
+        config.ui_enabled = ui_enabled;
+    }
+    if let Some(ui_auto_extract) = overrides.ui_auto_extract {
+        config.ui_auto_extract = ui_auto_extract;
     }
 }
 
@@ -345,11 +416,16 @@ token = "${STARSYNC_GITHUB_TOKEN}"
     fn dotenv_overrides_config_when_process_env_is_absent() {
         let defaults = Config::defaults();
         let file = FileConfig {
-            sqlite_enabled: Some(false),
+            search: Some(FileSearchConfig {
+                index_dir: Some("/from-config-search".to_string()),
+            }),
             ..FileConfig::default()
         };
         let mut dotenv = BTreeMap::new();
-        dotenv.insert("STARSYNC_SQLITE_ENABLED".to_string(), "true".to_string());
+        dotenv.insert(
+            "STARSYNC_SEARCH_INDEX_DIR".to_string(),
+            "/from-dotenv-search".to_string(),
+        );
 
         let config = resolve_config(
             defaults,
@@ -360,6 +436,35 @@ token = "${STARSYNC_GITHUB_TOKEN}"
         )
         .unwrap();
 
-        assert!(config.sqlite_enabled);
+        assert_eq!(
+            config.search_index_dir(),
+            PathBuf::from("/from-dotenv-search")
+        );
+    }
+
+    #[test]
+    fn ui_settings_follow_config_env_and_cli_precedence() {
+        let defaults = Config::defaults();
+        let file = FileConfig {
+            ui: Some(FileUiConfig {
+                enabled: Some(false),
+                dir: Some("~/from-config-ui".to_string()),
+                auto_extract: Some(false),
+            }),
+            ..FileConfig::default()
+        };
+        let mut env = BTreeMap::new();
+        env.insert("STARSYNC_UI_ENABLED".to_string(), "true".to_string());
+        env.insert("STARSYNC_UI_DIR".to_string(), "/from-env-ui".to_string());
+        let overrides = ConfigOverrides {
+            ui_auto_extract: Some(true),
+            ..ConfigOverrides::default()
+        };
+
+        let config = resolve_config(defaults, file, &BTreeMap::new(), &env, overrides).unwrap();
+
+        assert!(config.ui_enabled);
+        assert_eq!(config.ui_dir, PathBuf::from("/from-env-ui"));
+        assert!(config.ui_auto_extract);
     }
 }

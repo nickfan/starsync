@@ -2,7 +2,7 @@
 # will have compiled files and executables
 debug
 target
-dist
+/dist
 Formula/
 .buildx-cache*
 

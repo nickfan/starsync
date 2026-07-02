@@ -1,14 +1,16 @@
 use crate::{
+    cache::RepoCache,
     config::Config,
     events::EventBus,
     github::GitHubClient,
     markdown::{MarkdownStore, RepoMetaDocument},
     models::{
+        EventEnvelope, EventSubscriptionCreate, EventSubscriptionPatch, EventSubscriptionView,
         ListResponse, MetaPatch, MirrorState, ReadmeCacheEntry, RemoteRepo, RepoFilters,
         RepoIdentity, RepoMeta, RepoView, SearchResult, SortDirection, StarSyncEvent, SyncReport,
     },
     search,
-    sqlite_index::SqliteIndex,
+    tantivy_index::TantivyIndex,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -20,20 +22,21 @@ pub struct StarSyncService {
     config: Config,
     store: MarkdownStore,
     events: EventBus,
-    sqlite: Option<SqliteIndex>,
+    search_index: TantivyIndex,
+    cache: RepoCache,
 }
 
 impl StarSyncService {
     pub fn new(config: Config) -> Self {
         let store = MarkdownStore::new(config.repos_dir(), config.state_dir.clone());
-        let sqlite = config
-            .sqlite_enabled
-            .then(|| SqliteIndex::new(config.sqlite_file()));
+        let search_index = TantivyIndex::new(config.search_index_dir());
+        let events = EventBus::new(config.events_file(), config.event_subscriptions_file());
         Self {
             config,
             store,
-            events: EventBus::new(),
-            sqlite,
+            events,
+            search_index,
+            cache: RepoCache::new(),
         }
     }
 
@@ -43,6 +46,33 @@ impl StarSyncService {
 
     pub fn events(&self) -> EventBus {
         self.events.clone()
+    }
+
+    pub fn recent_events(&self, limit: usize) -> Result<Vec<EventEnvelope>> {
+        self.events.recent(limit)
+    }
+
+    pub fn list_event_subscriptions(&self) -> Vec<EventSubscriptionView> {
+        self.events.list_subscriptions()
+    }
+
+    pub fn create_event_subscription(
+        &self,
+        create: EventSubscriptionCreate,
+    ) -> Result<EventSubscriptionView> {
+        self.events.create_subscription(create)
+    }
+
+    pub fn patch_event_subscription(
+        &self,
+        id: &str,
+        patch: EventSubscriptionPatch,
+    ) -> Result<EventSubscriptionView> {
+        self.events.patch_subscription(id, patch)
+    }
+
+    pub fn delete_event_subscription(&self, id: &str) -> Result<EventSubscriptionView> {
+        self.events.delete_subscription(id)
     }
 
     pub fn init(&self) -> Result<()> {
@@ -59,17 +89,10 @@ impl StarSyncService {
     }
 
     pub fn search_repos(&self, filters: RepoFilters) -> Result<ListResponse<SearchResult>> {
-        let requires_merged_search =
-            filters.sort.is_some() || search::query_uses_structured_syntax(filters.q.as_deref());
-        if !requires_merged_search {
-            if let Some(sqlite) = &self.sqlite {
-                if let Ok(Some(result)) = sqlite.search(&filters) {
-                    return Ok(result);
-                }
-            }
+        if !self.search_index.exists() {
+            self.rebuild_index()?;
         }
-        let repos = self.merged_repos()?;
-        Ok(search::search_repos(repos, &filters))
+        self.search_index.search(&filters)
     }
 
     pub fn get_repo(&self, identity: &RepoIdentity) -> Result<Option<RepoView>> {
@@ -91,6 +114,7 @@ impl StarSyncService {
         let mut document = self.store.ensure_meta(identity)?;
         apply_meta_patch(&mut document.meta, patch);
         self.store.write_meta(&document)?;
+        self.cache.invalidate_all();
         self.events.emit(StarSyncEvent::MetaChanged {
             repo: identity.full_name(),
         });
@@ -100,6 +124,7 @@ impl StarSyncService {
 
     pub fn delete_meta(&self, identity: &RepoIdentity) -> Result<RepoMetaDocument> {
         let document = self.store.mark_meta_archived(identity)?;
+        self.cache.invalidate_all();
         self.events.emit(StarSyncEvent::MetaChanged {
             repo: identity.full_name(),
         });
@@ -185,6 +210,7 @@ impl StarSyncService {
         state.repos = merged.into_values().collect();
         state.last_sync_at = Some(Utc::now());
         self.store.write_mirror(&state)?;
+        self.cache.invalidate_all();
         self.rebuild_index()?;
         Ok(report)
     }
@@ -213,6 +239,7 @@ impl StarSyncService {
             }
         }
         self.store.write_mirror(&state)?;
+        self.cache.invalidate_all();
         self.rebuild_index()?;
         Ok(updated)
     }
@@ -220,13 +247,19 @@ impl StarSyncService {
     pub fn rebuild_index(&self) -> Result<()> {
         let repos = self.merged_repos()?;
         self.store.write_catalog(&repos)?;
-        if let Some(sqlite) = &self.sqlite {
-            sqlite.rebuild(&repos)?;
-        }
+        self.search_index.rebuild(&repos)?;
         Ok(())
     }
 
     pub fn merged_repos(&self) -> Result<Vec<RepoView>> {
+        if let Some(repos) = self.cache.merged_repos() {
+            return Ok(repos);
+        }
+        let repos = self.load_merged_repos()?;
+        Ok(self.cache.store_merged_repos(repos))
+    }
+
+    fn load_merged_repos(&self) -> Result<Vec<RepoView>> {
         self.init()?;
         let state = self.store.read_mirror()?;
         let meta_docs = self.store.list_meta()?;
@@ -365,7 +398,6 @@ mod tests {
         let config = Config {
             data_dir: dir.path().join("data"),
             state_dir: dir.path().join("state"),
-            sqlite_enabled: true,
             ..Config::defaults()
         };
         let service = StarSyncService::new(config);
@@ -442,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn structured_search_bypasses_sqlite_fts_for_field_filters() {
+    fn structured_search_uses_tantivy_index_with_field_filters() {
         let (_dir, service) = test_service();
         let mut tooling = remote("Toolbox");
         tooling.language = Some("Rust".to_string());
@@ -466,7 +498,7 @@ mod tests {
     }
 
     #[test]
-    fn sorted_search_uses_merged_results_instead_of_sqlite_rank() {
+    fn sorted_search_uses_requested_order_instead_of_tantivy_score() {
         let (_dir, service) = test_service();
         let mut low = remote("low");
         low.description = Some("agent toolkit".to_string());
@@ -488,6 +520,36 @@ mod tests {
         assert_eq!(response.items.len(), 2);
         assert_eq!(response.items[0].repo.full_name, "alice/high");
         assert_eq!(response.items[1].repo.full_name, "alice/low");
+    }
+
+    #[test]
+    fn merged_repo_cache_is_read_through_and_invalidated_on_meta_write() {
+        let (_dir, service) = test_service();
+        let identity = RepoIdentity::new("alice", "demo");
+        service.apply_remote_repos(vec![remote("demo")]).unwrap();
+
+        let initial = service.merged_repos().unwrap();
+        assert!(initial[0].user.tags.is_empty());
+
+        let mut document = service.store.ensure_meta(&identity).unwrap();
+        document.meta.user.tags = vec!["bypassed-cache".to_string()];
+        service.store.write_meta(&document).unwrap();
+
+        let cached = service.merged_repos().unwrap();
+        assert!(cached[0].user.tags.is_empty());
+
+        service
+            .patch_meta(
+                &identity,
+                MetaPatch {
+                    tags: Some(vec!["fresh".to_string()]),
+                    ..MetaPatch::default()
+                },
+            )
+            .unwrap();
+
+        let refreshed = service.merged_repos().unwrap();
+        assert_eq!(refreshed[0].user.tags, vec!["fresh"]);
     }
 
     #[test]

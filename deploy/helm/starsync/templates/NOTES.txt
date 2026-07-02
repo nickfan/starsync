@@ -1,0 +1,13 @@
+StarSync has been installed.
+
+Port-forward the service:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "starsync.fullname" . }} 8989:{{ .Values.service.port }}
+
+Open:
+  http://127.0.0.1:8989/ui/
+
+Set a GitHub token with either:
+  --set secret.create=true --set secret.githubToken=github_pat_xxx
+
+or:
+  --set secret.existingSecret=starsync-secret

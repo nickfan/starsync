@@ -17,6 +17,7 @@ FROM chef AS planner
 
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY ui ./ui
 
 RUN cargo chef prepare --recipe-path recipe.json
 
@@ -33,6 +34,7 @@ FROM chef AS builder
 COPY --from=cacher /app/target /app/target
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY ui ./ui
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
@@ -47,18 +49,20 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --create-home --home-dir /home/starsync starsync \
-    && mkdir -p /data /state \
-    && chown -R starsync:starsync /data /state /home/starsync
+    && mkdir -p /data /state /ui \
+    && chown -R starsync:starsync /data /state /ui /home/starsync
 
 COPY --from=builder /out/starsync /usr/local/bin/starsync
 
 ENV STARSYNC_DATA_DIR=/data \
     STARSYNC_STATE_DIR=/state \
+    STARSYNC_SEARCH_INDEX_DIR=/state/search \
+    STARSYNC_UI_DIR=/ui \
     STARSYNC_BIND=0.0.0.0:8989
 
 USER starsync
 
-VOLUME ["/data", "/state"]
+VOLUME ["/data", "/state", "/ui"]
 EXPOSE 8989
 
 ENTRYPOINT ["starsync"]

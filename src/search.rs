@@ -1,5 +1,5 @@
 use crate::models::{ListResponse, RepoFilters, RepoSort, RepoView, SearchResult, SortDirection};
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::BTreeSet};
 
 pub fn list_repos(mut repos: Vec<RepoView>, filters: &RepoFilters) -> ListResponse<RepoView> {
     let query = ParsedQuery::new(filters.q.as_deref());
@@ -15,6 +15,48 @@ pub fn search_repos(repos: Vec<RepoView>, filters: &RepoFilters) -> ListResponse
         .filter(|repo| matches_filter_fields(repo, filters))
         .filter_map(|repo| score_repo(repo, &query))
         .collect();
+    sort_search_results(&mut results, filters);
+    page_items(results, filters)
+}
+
+pub fn result_for_repo(repo: RepoView, filters: &RepoFilters) -> Option<SearchResult> {
+    if !matches_filter_fields(&repo, filters) {
+        return None;
+    }
+    let query = ParsedQuery::new(filters.q.as_deref());
+    score_repo(repo, &query)
+}
+
+pub fn result_for_index_hit(
+    repo: RepoView,
+    filters: &RepoFilters,
+    require_query_match: bool,
+) -> Option<SearchResult> {
+    if !matches_filter_fields(&repo, filters) {
+        return None;
+    }
+    let query = ParsedQuery::new(filters.q.as_deref());
+    if require_query_match {
+        return score_repo(repo, &query);
+    }
+    let index_result = SearchResult {
+        repo: repo.clone(),
+        score: 0.0,
+        matched_fields: Vec::new(),
+        snippet: repo
+            .user
+            .summary
+            .clone()
+            .or_else(|| repo.description.clone())
+            .or_else(|| repo.readme_snippet.clone()),
+    };
+    Some(score_repo(repo, &query).unwrap_or(index_result))
+}
+
+pub fn order_and_page_search_results(
+    mut results: Vec<SearchResult>,
+    filters: &RepoFilters,
+) -> ListResponse<SearchResult> {
     sort_search_results(&mut results, filters);
     page_items(results, filters)
 }
@@ -39,6 +81,10 @@ pub fn query_uses_structured_syntax(query: Option<&str>) -> bool {
             | QueryToken::Or
             | QueryToken::Not => true,
         })
+}
+
+pub fn query_uses_cjk(query: Option<&str>) -> bool {
+    query.unwrap_or_default().chars().any(is_cjk)
 }
 
 fn matches_filter_fields(repo: &RepoView, filters: &RepoFilters) -> bool {
@@ -585,7 +631,7 @@ fn match_text(value: &str, pattern: &str, default: TextDefault) -> bool {
         return value.eq_ignore_ascii_case(exact);
     }
     if let Some(contains) = pattern.strip_prefix('~') {
-        return contains_ignore_ascii_case(value, contains);
+        return contains_text_match(value, contains);
     }
     if let Some(prefix) = pattern.strip_suffix('*') {
         if !prefix.contains('*') {
@@ -594,7 +640,7 @@ fn match_text(value: &str, pattern: &str, default: TextDefault) -> bool {
     }
     match default {
         TextDefault::Exact => value.eq_ignore_ascii_case(pattern),
-        TextDefault::Contains => contains_ignore_ascii_case(value, pattern),
+        TextDefault::Contains => contains_text_match(value, pattern),
     }
 }
 
@@ -665,10 +711,11 @@ fn parse_bool(value: &str) -> Option<bool> {
     }
 }
 
-fn contains_ignore_ascii_case(value: &str, needle: &str) -> bool {
-    value
-        .to_ascii_lowercase()
-        .contains(&needle.to_ascii_lowercase())
+fn contains_text_match(value: &str, needle: &str) -> bool {
+    let value_normalized = value.to_lowercase();
+    let needle_normalized = needle.to_lowercase();
+    value_normalized.contains(&needle_normalized)
+        || cjk_overlap_score(&value_normalized, &needle_normalized).is_some()
 }
 
 fn starts_with_ignore_ascii_case(value: &str, prefix: &str) -> bool {
@@ -698,14 +745,91 @@ fn add_match(
     query: &str,
     weight: f32,
 ) -> bool {
-    let query = query.to_ascii_lowercase();
-    if value.to_ascii_lowercase().contains(&query) {
-        *score += weight;
+    let value_normalized = value.to_lowercase();
+    let query_normalized = query.to_lowercase();
+    let match_strength = if value_normalized.contains(&query_normalized) {
+        Some(1.0)
+    } else {
+        cjk_overlap_score(&value_normalized, &query_normalized)
+    };
+    if let Some(match_strength) = match_strength {
+        *score += weight * match_strength;
         push_field(fields, field);
         true
     } else {
         false
     }
+}
+
+fn cjk_overlap_score(value: &str, query: &str) -> Option<f32> {
+    if !query.chars().any(is_cjk) {
+        return None;
+    }
+    let query_tokens = cjk_search_tokens(query);
+    if query_tokens.is_empty() {
+        return None;
+    }
+    let value_tokens = cjk_search_tokens(value);
+    let matched = query_tokens
+        .iter()
+        .filter(|token| value_tokens.contains(*token))
+        .count();
+    let ratio = matched as f32 / query_tokens.len() as f32;
+    let threshold = if query_tokens.len() <= 2 { 1.0 } else { 0.6 };
+    (ratio >= threshold).then_some(ratio)
+}
+
+fn cjk_search_tokens(value: &str) -> BTreeSet<String> {
+    let mut tokens = BTreeSet::new();
+    let mut cjk_run = Vec::new();
+    let mut word = String::new();
+
+    let flush_word = |tokens: &mut BTreeSet<String>, word: &mut String| {
+        if !word.is_empty() {
+            tokens.insert(word.clone());
+            word.clear();
+        }
+    };
+    let flush_cjk = |tokens: &mut BTreeSet<String>, run: &mut Vec<char>| {
+        if run.len() == 1 {
+            tokens.insert(run[0].to_string());
+        } else {
+            for pair in run.windows(2) {
+                tokens.insert(pair.iter().collect());
+            }
+        }
+        run.clear();
+    };
+
+    for ch in value.chars() {
+        if is_cjk(ch) {
+            flush_word(&mut tokens, &mut word);
+            cjk_run.push(ch);
+        } else if ch.is_alphanumeric() {
+            flush_cjk(&mut tokens, &mut cjk_run);
+            word.push(ch);
+        } else {
+            flush_word(&mut tokens, &mut word);
+            flush_cjk(&mut tokens, &mut cjk_run);
+        }
+    }
+    flush_word(&mut tokens, &mut word);
+    flush_cjk(&mut tokens, &mut cjk_run);
+    tokens
+}
+
+fn is_cjk(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{3400}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{20000}'..='\u{2A6DF}'
+            | '\u{2A700}'..='\u{2B73F}'
+            | '\u{2B740}'..='\u{2B81F}'
+            | '\u{2B820}'..='\u{2CEAF}'
+            | '\u{2CEB0}'..='\u{2EBEF}'
+    )
 }
 
 fn make_snippet(value: &str, query: &str) -> String {
@@ -859,6 +983,39 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("Rust"));
+    }
+
+    #[test]
+    fn search_matches_chinese_cjk_ngram_overlap() {
+        let mut repo = repo("demo", &[]);
+        repo.user.summary = Some("支持中文本地检索和搜索控制台".to_string());
+        let filters = RepoFilters {
+            q: Some("中文搜索".to_string()),
+            ..RepoFilters::default()
+        };
+
+        let results = search_repos(vec![repo], &filters);
+
+        assert_eq!(results.items.len(), 1);
+        assert!(results.items[0]
+            .matched_fields
+            .iter()
+            .any(|field| field == "summary"));
+        assert!(query_uses_cjk(Some("中文搜索")));
+    }
+
+    #[test]
+    fn qualifier_contains_uses_chinese_cjk_ngram_overlap() {
+        let mut repo = repo("demo", &[]);
+        repo.user.notes = Some("向量 DB 数据库和中文知识库检索".to_string());
+        let filters = RepoFilters {
+            q: Some("notes:向量数据库".to_string()),
+            ..RepoFilters::default()
+        };
+
+        let results = list_repos(vec![repo], &filters);
+
+        assert_eq!(results.total, 1);
     }
 
     #[test]

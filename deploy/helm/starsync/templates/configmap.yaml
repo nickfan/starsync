@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "starsync.fullname" . }}-config
+  labels:
+    {{- include "starsync.labels" . | nindent 4 }}
+data:
+  STARSYNC_DATA_DIR: {{ .Values.config.dataDir | quote }}
+  STARSYNC_STATE_DIR: {{ .Values.config.stateDir | quote }}
+  STARSYNC_SEARCH_INDEX_DIR: {{ .Values.config.searchIndexDir | quote }}
+  STARSYNC_UI_DIR: {{ .Values.config.uiDir | quote }}
+  STARSYNC_BIND: {{ .Values.config.bind | quote }}
+  STARSYNC_STORAGE_BACKEND: {{ .Values.config.storageBackend | quote }}
+  STARSYNC_UI_ENABLED: {{ .Values.config.uiEnabled | quote }}
+  STARSYNC_UI_AUTO_EXTRACT: {{ .Values.config.uiAutoExtract | quote }}
+  RUST_LOG: {{ .Values.config.rustLog | quote }}

@@ -2,7 +2,7 @@
 
 StarSync 是一个 local-first 的 Rust 服务，用来把你的 GitHub starred repositories 变成可检索的个人知识库。
 
-它会镜像 GitHub starred repo 清单，把你的个人 meta 信息保存在 Markdown/YAML 中，同时提供 CLI、REST、OpenAPI、SSE 事件流和 stdio MCP Server。SQLite FTS 是可选的检索加速层，可以随时从 Markdown 和远程 mirror 状态重建。
+它会镜像 GitHub starred repo 清单，把你的个人 meta 信息保存在 Markdown/YAML 中，同时提供 CLI、REST、OpenAPI、SSE 事件流和 stdio MCP Server，并用 Tantivy 派生本地检索索引，支持中文分词和拼音检索。
 
 > StarSync v1 不会在 GitHub 上执行 star 或 unstar。GitHub 是远程 star 清单的事实源；本地 Markdown 是 tags、notes、status、links 等个人 meta 的事实源。
 
@@ -13,7 +13,8 @@ StarSync 是一个 local-first 的 Rust 服务，用来把你的 GitHub starred 
 - 检索 GitHub repo 信息、本地 tags/notes/status、可选 README 摘要。
 - 通过 CLI、REST API、OpenAPI 3.1、SSE events、stdio MCP Server 浏览和搜索。
 - 默认使用本地文件存储，也支持 Git-backed metadata storage，方便分享或备份。
-- SQLite FTS 是派生索引，可以随时 rebuild。
+- 使用轻量 Moka 进程内读缓存，但 Markdown 和 mirror 文件仍然是事实源。
+- Tantivy 检索索引是派生数据，可以随时从 Markdown 和 mirror 状态 rebuild。
 
 ## 安装
 
@@ -44,13 +45,15 @@ docker pull docker.io/nickfan/starsync:latest
 ```text
 STARSYNC_DATA_DIR=/data
 STARSYNC_STATE_DIR=/state
+STARSYNC_SEARCH_INDEX_DIR=/state/search
+STARSYNC_UI_DIR=/ui
 STARSYNC_BIND=0.0.0.0:8989
 ```
 
 用宿主机路径持久化运行 REST 服务：
 
 ```bash
-mkdir -p "$HOME/.starsync/data" "$HOME/.starsync/state"
+mkdir -p "$HOME/.starsync/data" "$HOME/.starsync/state" "$HOME/.starsync/ui"
 
 docker run --rm -it \
   --name starsync \
@@ -58,6 +61,7 @@ docker run --rm -it \
   -p 8989:8989 \
   -v "$HOME/.starsync/data:/data" \
   -v "$HOME/.starsync/state:/state" \
+  -v "$HOME/.starsync/ui:/ui" \
   ghcr.io/nickfan/starsync:latest
 ```
 
@@ -68,12 +72,14 @@ docker run --rm -it \
   --env-file .env \
   -v "$HOME/.starsync/data:/data" \
   -v "$HOME/.starsync/state:/state" \
+  -v "$HOME/.starsync/ui:/ui" \
   ghcr.io/nickfan/starsync:latest sync
 
 docker run --rm -it \
   --env-file .env \
   -v "$HOME/.starsync/data:/data" \
   -v "$HOME/.starsync/state:/state" \
+  -v "$HOME/.starsync/ui:/ui" \
   ghcr.io/nickfan/starsync:latest search rust
 ```
 
@@ -133,6 +139,23 @@ cargo build --release
 ```bash
 cargo run -- --help
 ```
+
+### Kubernetes / Helm
+
+Kubernetes demo 位于 `deploy/k8s/`，Helm Chart 位于 `deploy/helm/starsync/`。
+
+```bash
+helm upgrade --install starsync deploy/helm/starsync \
+  --namespace starsync \
+  --create-namespace \
+  --set secret.existingSecret=starsync-secret
+```
+
+裸 YAML、Helm values、存储卷拆分和定时同步任务见
+[docs/deployment/kubernetes.md](docs/deployment/kubernetes.md)。
+
+收敛后的 Cloudflare-only cloud mode 设计见
+[docs/architecture/cloud-mode.md](docs/architecture/cloud-mode.md)。
 
 或者使用构建后的二进制：
 
@@ -232,7 +255,10 @@ STARSYNC_GITHUB_TOKEN
 STARSYNC_BIND
 STARSYNC_STORAGE_BACKEND
 STARSYNC_GIT_REMOTE
-STARSYNC_SQLITE_ENABLED
+STARSYNC_SEARCH_INDEX_DIR
+STARSYNC_UI_ENABLED
+STARSYNC_UI_DIR
+STARSYNC_UI_AUTO_EXTRACT
 ```
 
 `config.toml` 支持环境变量插值：
@@ -240,8 +266,8 @@ STARSYNC_SQLITE_ENABLED
 ```toml
 data_dir = "~/.starsync/data"
 state_dir = "~/.starsync/state"
+ui_dir = "~/.starsync/ui"
 bind = "127.0.0.1:8989"
-sqlite_enabled = true
 
 [github]
 token = "${STARSYNC_GITHUB_TOKEN}"
@@ -250,6 +276,14 @@ token = "${STARSYNC_GITHUB_TOKEN}"
 backend = "local"
 # backend = "git"
 # git_remote = "git@github.com:you/starsync-meta.git"
+
+[search]
+index_dir = "~/.starsync/state/search"
+
+[ui]
+enabled = true
+dir = "~/.starsync/ui"
+auto_extract = true
 ```
 
 不要把 token 提交进 metadata Git 仓库。
@@ -283,6 +317,8 @@ starsync search "agent framework" --archived true
 starsync search 'owner:nickfan AND name:^T'
 starsync search '(language:Rust AND topic:cli) OR tag:agent'
 starsync search 'language:Rust -topic:web stars:>=1000'
+starsync search '中文搜索'
+starsync search 'notes:向量数据库'
 ```
 
 搜索语法尽量贴近 GitHub qualifier 风格：
@@ -312,6 +348,10 @@ starsync list --owner nickfan --sort name --direction asc --limit 50
 
 # 翻页浏览本地 meta 和 GitHub topic 混合命中的结果
 starsync search 'topic:cli OR tag:agent' --sort updated --direction desc --page 2 --per-page 25
+
+# 中文/CJK 轻量模糊检索，覆盖 notes、summary、README 摘要和 metadata
+starsync search '中文搜索'
+starsync search 'summary:本地知识库'
 ```
 
 只编辑本地 meta，不影响 GitHub：
@@ -330,13 +370,13 @@ starsync meta edit owner repo \
 starsync meta delete owner repo
 ```
 
-从 Markdown 和 mirror 状态重建 SQLite FTS：
+从 Markdown 和 mirror 状态重建 Tantivy 派生检索索引：
 
 ```bash
 starsync index rebuild
 ```
 
-这也会刷新 `repos/` 下不依赖 SQLite/REST 引擎的本地清单：
+这也会刷新 `repos/` 下不依赖 Tantivy/REST 引擎的本地清单：
 
 - `INDEX.md`：带 YAML front matter 的顶层人读索引。
 - `catalog.yaml` 和 `catalog.json`：融合 repo + meta 的机器可读总清单。
@@ -347,6 +387,32 @@ starsync index rebuild
 
 ```bash
 starsync enrich readme --limit 50
+```
+
+启动 REST 服务和内置 Web UI：
+
+```bash
+starsync serve
+```
+
+终端会打印两个入口：
+
+```text
+StarSync REST API listening on http://127.0.0.1:8989
+StarSync Web UI available at http://127.0.0.1:8989/ui/
+```
+
+默认情况下，编译后的单个 binary 内置了一份小型静态 UI 包。当
+`~/.starsync/ui/index.html` 不存在时，`serve` 会把内置 UI 解包到
+`~/.starsync/ui`，并从 `/ui/` 提供静态访问。已有文件不会被启动时覆盖，
+所以你可以把这个目录替换成自己的前端界面。
+
+常用 UI 参数：
+
+```bash
+starsync serve --ui-dir ~/.starsync/ui
+starsync serve --no-ui
+starsync serve --no-ui-extract
 ```
 
 ## 数据目录
@@ -360,12 +426,16 @@ starsync enrich readme --limit 50
 ~/.starsync/data/repos/INDEX.by-repo.md
 ~/.starsync/data/repos/INDEX.by-owner.md
 ~/.starsync/data/repos/{owner}/{repo}/INDEX.md
+~/.starsync/ui/index.html
+~/.starsync/ui/assets/
 ~/.starsync/state/mirror.json
-~/.starsync/state/starsync.db
+~/.starsync/state/search/
+~/.starsync/state/events.jsonl
+~/.starsync/state/event-subscriptions.json
 ```
 
 顶层清单文件是派生数据，会在 `sync`、`meta edit`、`meta delete`、
-`enrich readme`、`index rebuild` 后重建。这样即使没有 SQLite 或 REST 服务，
+`enrich readme`、`index rebuild` 后重建。这样即使没有 Tantivy 索引或 REST 服务，
 也能直接用本地文件快速检索：
 
 ```bash
@@ -402,7 +472,13 @@ archived: false
 Long-form notes go here.
 ```
 
-Markdown/YAML 是个人 meta 的事实源。SQLite 只是派生索引，可以重建。
+Markdown/YAML 是个人 meta 的事实源。`~/.starsync/state/search/` 下的 Tantivy
+目录只是派生索引，可以随时重建。
+
+搜索会把 GitHub repo 信息、Markdown meta、README 摘要、topics、tags、status
+融合写入 Tantivy。StarSync 注册 `tantivy-jieba` 做中文分词，同时写入派生的
+CJK n-gram、拼音词和拼音首字母字段。结构化 qualifier 和显式排序仍然基于融合后的
+repo 记录计算，所以 CLI、REST API、Web UI 和 MCP Server 返回的是同一份本地视图。
 
 ## REST API
 
@@ -418,6 +494,12 @@ starsync serve
 http://127.0.0.1:8989
 ```
 
+Web UI 地址：
+
+```text
+http://127.0.0.1:8989/ui/
+```
+
 常用接口：
 
 ```text
@@ -431,6 +513,11 @@ GET  /search
 POST /sync
 POST /enrich/readme
 GET  /events
+GET  /events/recent
+GET  /event-subscriptions
+POST /event-subscriptions
+PATCH /event-subscriptions/{id}
+DELETE /event-subscriptions/{id}
 GET  /openapi.yaml
 GET  /openapi.json
 ```
@@ -442,6 +529,10 @@ curl 'http://127.0.0.1:8989/repos?limit=20&language=Rust&sort=updated&direction=
 curl 'http://127.0.0.1:8989/search?q=retrieval&tag=ai'
 curl 'http://127.0.0.1:8989/search?q=language:Rust%20-topic:web&sort=stars&direction=desc&limit=20'
 curl 'http://127.0.0.1:8989/repos?owner=nickfan&sort=name&direction=asc&limit=50'
+curl 'http://127.0.0.1:8989/events/recent?limit=20'
+curl -X POST 'http://127.0.0.1:8989/event-subscriptions' \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://example.com/starsync-hook","events":["repo.added","meta.changed"],"secret":"change-me"}'
 ```
 
 导出 OpenAPI 3.1：
@@ -468,6 +559,10 @@ starsync mcp
 - `sync_stars`
 - `enrich_readme`
 - `list_recent_events`
+- `list_event_subscriptions`
+- `create_event_subscription`
+- `update_event_subscription`
+- `delete_event_subscription`
 
 Resources：
 
@@ -494,7 +589,7 @@ starsync storage pull
 starsync storage push
 ```
 
-Git storage 命令只会 stage `repos/` 下的 metadata。Token 和 SQLite 派生状态不会参与 Git metadata sync。
+Git storage 命令只会 stage `repos/` 下的 metadata。Token、事件日志、webhook secret 和派生检索索引不会参与 Git metadata sync。
 
 ## 发布自动化
 

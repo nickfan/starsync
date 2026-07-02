@@ -71,7 +71,38 @@ pub fn openapi_json() -> Value {
             "/events": {
                 "get": {
                     "operationId": "streamEvents",
-                    "responses": {"200": {"description": "Server-Sent Events stream"}}
+                    "responses": {"200": {"description": "Server-Sent Events stream of EventEnvelope payloads"}}
+                }
+            },
+            "/events/recent": {
+                "get": {
+                    "operationId": "listRecentEvents",
+                    "parameters": [{"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 500}}],
+                    "responses": {"200": {"description": "Recent durable event envelopes"}}
+                }
+            },
+            "/event-subscriptions": {
+                "get": {
+                    "operationId": "listEventSubscriptions",
+                    "responses": {"200": {"description": "Configured webhook event subscriptions"}}
+                },
+                "post": {
+                    "operationId": "createEventSubscription",
+                    "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/EventSubscriptionCreate"}}}},
+                    "responses": {"200": {"description": "Created webhook event subscription"}}
+                }
+            },
+            "/event-subscriptions/{id}": {
+                "patch": {
+                    "operationId": "updateEventSubscription",
+                    "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+                    "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/EventSubscriptionPatch"}}}},
+                    "responses": {"200": {"description": "Updated webhook event subscription"}, "404": {"description": "Subscription not found"}}
+                },
+                "delete": {
+                    "operationId": "deleteEventSubscription",
+                    "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+                    "responses": {"200": {"description": "Deleted webhook event subscription"}, "404": {"description": "Subscription not found"}}
                 }
             },
             "/openapi.json": {
@@ -91,6 +122,25 @@ pub fn openapi_json() -> Value {
                         "summary": {"anyOf": [{"type": "string"}, {"type": "null"}]},
                         "notes": {"anyOf": [{"type": "string"}, {"type": "null"}]},
                         "archived": {"type": "boolean"}
+                    }
+                },
+                "EventSubscriptionCreate": {
+                    "type": "object",
+                    "required": ["url"],
+                    "properties": {
+                        "url": {"type": "string", "format": "uri"},
+                        "events": {"type": "array", "items": {"type": "string"}, "description": "Event names such as repo.added, meta.changed, sync.completed, or *."},
+                        "enabled": {"type": "boolean", "default": true},
+                        "secret": {"type": ["string", "null"], "description": "Optional HMAC secret. Never returned by read APIs."}
+                    }
+                },
+                "EventSubscriptionPatch": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "format": "uri"},
+                        "events": {"type": "array", "items": {"type": "string"}},
+                        "enabled": {"type": "boolean"},
+                        "secret": {"anyOf": [{"type": "string"}, {"type": "null"}], "description": "Set a new HMAC secret or null to clear it."}
                     }
                 }
             }

@@ -2,7 +2,7 @@
 
 StarSync is a local-first Rust service for turning your GitHub starred repositories into a searchable personal knowledge base.
 
-It mirrors your GitHub starred repository list, keeps your personal metadata in Markdown/YAML, exposes CLI + REST + MCP interfaces, and can optionally build a SQLite FTS index for faster search.
+It mirrors your GitHub starred repository list, keeps your personal metadata in Markdown/YAML, exposes CLI + REST + MCP interfaces, and builds a Tantivy-derived local search index with Chinese tokenization and pinyin support.
 
 > StarSync v1 never stars or unstars repositories on GitHub. GitHub is the remote source for the star list; local Markdown is the source of truth for your tags, notes, status, and links.
 
@@ -13,7 +13,8 @@ It mirrors your GitHub starred repository list, keeps your personal metadata in 
 - Search merged GitHub repo facts, local tags/notes/status, and optional README snippets.
 - Browse and search through CLI, REST API, OpenAPI 3.1, SSE events, and a stdio MCP server.
 - Use local filesystem storage by default, with Git-backed metadata storage available for sharing or backup.
-- Rebuild optional SQLite FTS from Markdown and mirror state at any time.
+- Use a small Moka in-process read cache while keeping Markdown and mirror files as the source of truth.
+- Rebuild the derived Tantivy search index from Markdown and mirror state at any time.
 
 ## Install
 
@@ -44,13 +45,15 @@ The container defaults are:
 ```text
 STARSYNC_DATA_DIR=/data
 STARSYNC_STATE_DIR=/state
+STARSYNC_SEARCH_INDEX_DIR=/state/search
+STARSYNC_UI_DIR=/ui
 STARSYNC_BIND=0.0.0.0:8989
 ```
 
 Run the REST service with persistent host paths:
 
 ```bash
-mkdir -p "$HOME/.starsync/data" "$HOME/.starsync/state"
+mkdir -p "$HOME/.starsync/data" "$HOME/.starsync/state" "$HOME/.starsync/ui"
 
 docker run --rm -it \
   --name starsync \
@@ -58,6 +61,7 @@ docker run --rm -it \
   -p 8989:8989 \
   -v "$HOME/.starsync/data:/data" \
   -v "$HOME/.starsync/state:/state" \
+  -v "$HOME/.starsync/ui:/ui" \
   ghcr.io/nickfan/starsync:latest
 ```
 
@@ -68,12 +72,14 @@ docker run --rm -it \
   --env-file .env \
   -v "$HOME/.starsync/data:/data" \
   -v "$HOME/.starsync/state:/state" \
+  -v "$HOME/.starsync/ui:/ui" \
   ghcr.io/nickfan/starsync:latest sync
 
 docker run --rm -it \
   --env-file .env \
   -v "$HOME/.starsync/data:/data" \
   -v "$HOME/.starsync/state:/state" \
+  -v "$HOME/.starsync/ui:/ui" \
   ghcr.io/nickfan/starsync:latest search rust
 ```
 
@@ -134,6 +140,24 @@ Run from the checkout:
 ```bash
 cargo run -- --help
 ```
+
+### Kubernetes / Helm
+
+Kubernetes demos live under `deploy/k8s/`, and the Helm chart lives under
+`deploy/helm/starsync/`.
+
+```bash
+helm upgrade --install starsync deploy/helm/starsync \
+  --namespace starsync \
+  --create-namespace \
+  --set secret.existingSecret=starsync-secret
+```
+
+See [docs/deployment/kubernetes.md](docs/deployment/kubernetes.md) for the
+plain manifests, Helm values, storage layout, and scheduled sync jobs.
+
+For the trimmed Cloudflare-only cloud mode sketch, see
+[docs/architecture/cloud-mode.md](docs/architecture/cloud-mode.md).
 
 Or use the built binary:
 
@@ -233,7 +257,10 @@ STARSYNC_GITHUB_TOKEN
 STARSYNC_BIND
 STARSYNC_STORAGE_BACKEND
 STARSYNC_GIT_REMOTE
-STARSYNC_SQLITE_ENABLED
+STARSYNC_SEARCH_INDEX_DIR
+STARSYNC_UI_ENABLED
+STARSYNC_UI_DIR
+STARSYNC_UI_AUTO_EXTRACT
 ```
 
 `config.toml` may reference environment variables:
@@ -241,8 +268,8 @@ STARSYNC_SQLITE_ENABLED
 ```toml
 data_dir = "~/.starsync/data"
 state_dir = "~/.starsync/state"
+ui_dir = "~/.starsync/ui"
 bind = "127.0.0.1:8989"
-sqlite_enabled = true
 
 [github]
 token = "${STARSYNC_GITHUB_TOKEN}"
@@ -251,6 +278,14 @@ token = "${STARSYNC_GITHUB_TOKEN}"
 backend = "local"
 # backend = "git"
 # git_remote = "git@github.com:you/starsync-meta.git"
+
+[search]
+index_dir = "~/.starsync/state/search"
+
+[ui]
+enabled = true
+dir = "~/.starsync/ui"
+auto_extract = true
 ```
 
 Never commit tokens into the metadata Git repository.
@@ -284,6 +319,8 @@ starsync search "agent framework" --archived true
 starsync search 'owner:nickfan AND name:^T'
 starsync search '(language:Rust AND topic:cli) OR tag:agent'
 starsync search 'language:Rust -topic:web stars:>=1000'
+starsync search '中文搜索'
+starsync search 'notes:向量数据库'
 ```
 
 Search query syntax follows GitHub-style qualifiers where possible:
@@ -313,6 +350,10 @@ starsync list --owner nickfan --sort name --direction asc --limit 50
 
 # Page through local meta and GitHub topic matches
 starsync search 'topic:cli OR tag:agent' --sort updated --direction desc --page 2 --per-page 25
+
+# Chinese/CJK fuzzy local search through notes, summaries, README snippets, and metadata
+starsync search '中文搜索'
+starsync search 'summary:本地知识库'
 ```
 
 Edit local metadata only:
@@ -331,7 +372,7 @@ Archive local metadata without touching GitHub:
 starsync meta delete owner repo
 ```
 
-Refresh the optional SQLite FTS index from Markdown and mirror state:
+Rebuild the derived Tantivy search index from Markdown and mirror state:
 
 ```bash
 starsync index rebuild
@@ -350,6 +391,32 @@ Fetch README snippets for current starred repositories:
 starsync enrich readme --limit 50
 ```
 
+Start the REST service and built-in Web UI:
+
+```bash
+starsync serve
+```
+
+The terminal prints both entry points:
+
+```text
+StarSync REST API listening on http://127.0.0.1:8989
+StarSync Web UI available at http://127.0.0.1:8989/ui/
+```
+
+By default the compiled binary carries a small static UI bundle. When
+`~/.starsync/ui/index.html` is missing, `serve` extracts the bundled UI into
+`~/.starsync/ui` and serves it from `/ui/`. Existing files are left alone, so
+you can replace that directory with a custom frontend.
+
+Useful UI flags:
+
+```bash
+starsync serve --ui-dir ~/.starsync/ui
+starsync serve --no-ui
+starsync serve --no-ui-extract
+```
+
 ## Data layout
 
 Default paths:
@@ -361,13 +428,17 @@ Default paths:
 ~/.starsync/data/repos/INDEX.by-repo.md
 ~/.starsync/data/repos/INDEX.by-owner.md
 ~/.starsync/data/repos/{owner}/{repo}/INDEX.md
+~/.starsync/ui/index.html
+~/.starsync/ui/assets/
 ~/.starsync/state/mirror.json
-~/.starsync/state/starsync.db
+~/.starsync/state/search/
+~/.starsync/state/events.jsonl
+~/.starsync/state/event-subscriptions.json
 ```
 
 Top-level catalog files are derived data and are rebuilt by `sync`, `meta edit`,
 `meta delete`, `enrich readme`, and `index rebuild`. They make quick local
-lookup possible without SQLite or a running REST service:
+lookup possible without the Tantivy index or a running REST service:
 
 ```bash
 grep -R "keepers" ~/.starsync/data/repos
@@ -403,7 +474,15 @@ archived: false
 Long-form notes go here.
 ```
 
-Markdown/YAML is the personal metadata source of truth. SQLite is an optional derived index and can be rebuilt.
+Markdown/YAML is the personal metadata source of truth. The Tantivy directory
+under `~/.starsync/state/search/` is a derived index and can be rebuilt.
+
+Search indexes fused GitHub repo facts, Markdown meta, README snippets, topics,
+tags, and status into Tantivy. StarSync registers `tantivy-jieba` for Chinese
+tokenization and also writes derived CJK n-grams, pinyin words, and pinyin
+initials into the index. Structured qualifiers and explicit sorting are still
+evaluated against the fused repo records so the CLI, REST API, Web UI, and MCP
+server return the same local view.
 
 ## REST API
 
@@ -419,6 +498,12 @@ Default bind address:
 http://127.0.0.1:8989
 ```
 
+The Web UI is served from:
+
+```text
+http://127.0.0.1:8989/ui/
+```
+
 Useful endpoints:
 
 ```text
@@ -432,6 +517,11 @@ GET  /search
 POST /sync
 POST /enrich/readme
 GET  /events
+GET  /events/recent
+GET  /event-subscriptions
+POST /event-subscriptions
+PATCH /event-subscriptions/{id}
+DELETE /event-subscriptions/{id}
 GET  /openapi.yaml
 GET  /openapi.json
 ```
@@ -443,6 +533,10 @@ curl 'http://127.0.0.1:8989/repos?limit=20&language=Rust&sort=updated&direction=
 curl 'http://127.0.0.1:8989/search?q=retrieval&tag=ai'
 curl 'http://127.0.0.1:8989/search?q=language:Rust%20-topic:web&sort=stars&direction=desc&limit=20'
 curl 'http://127.0.0.1:8989/repos?owner=nickfan&sort=name&direction=asc&limit=50'
+curl 'http://127.0.0.1:8989/events/recent?limit=20'
+curl -X POST 'http://127.0.0.1:8989/event-subscriptions' \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://example.com/starsync-hook","events":["repo.added","meta.changed"],"secret":"change-me"}'
 ```
 
 Export OpenAPI 3.1:
@@ -469,6 +563,10 @@ Available MCP tools include:
 - `sync_stars`
 - `enrich_readme`
 - `list_recent_events`
+- `list_event_subscriptions`
+- `create_event_subscription`
+- `update_event_subscription`
+- `delete_event_subscription`
 
 Resources:
 
@@ -495,7 +593,7 @@ starsync storage pull
 starsync storage push
 ```
 
-Only metadata under `repos/` is staged by the Git storage command. Tokens and derived SQLite state are not part of the Git metadata sync.
+Only metadata under `repos/` is staged by the Git storage command. Tokens, event logs, webhook secrets, and derived search index state are not part of the Git metadata sync.
 
 ## Release automation
 

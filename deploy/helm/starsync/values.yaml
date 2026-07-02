@@ -1,0 +1,112 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/nickfan/starsync
+  tag: latest
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podSecurityContext:
+  fsGroup: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  capabilities:
+    drop:
+      - ALL
+
+config:
+  dataDir: /data
+  stateDir: /state
+  searchIndexDir: /index
+  uiDir: /ui
+  bind: 0.0.0.0:8989
+  storageBackend: local
+  uiEnabled: true
+  uiAutoExtract: true
+  rustLog: info
+
+secret:
+  create: false
+  existingSecret: ""
+  githubToken: ""
+
+extraEnv: []
+extraEnvFrom: []
+
+persistence:
+  data:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+  state:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+  index:
+    enabled: true
+    size: 4Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+  ui:
+    enabled: false
+    size: 512Mi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+
+service:
+  type: ClusterIP
+  port: 8989
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: starsync.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+jobs:
+  sync:
+    enabled: false
+    schedule: "17 */6 * * *"
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3
+  enrichReadme:
+    enabled: false
+    schedule: "41 2 * * *"
+    limit: 100
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3

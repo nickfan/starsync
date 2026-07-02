@@ -1,4 +1,5 @@
 pub mod api;
+pub mod cache;
 pub mod cli;
 pub mod config;
 pub mod events;
@@ -9,8 +10,9 @@ pub mod models;
 pub mod openapi;
 pub mod search;
 pub mod service;
-pub mod sqlite_index;
 pub mod storage;
+pub mod tantivy_index;
+pub mod ui;
 
 pub use config::{Config, ConfigOverrides};
 pub use models::*;
