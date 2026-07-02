@@ -84,6 +84,13 @@ updated, count = pattern.subn(rf"\g<1>{version}\2", raw, count=1)
 if count != 1:
     raise SystemExit("failed to update package.version in Cargo.toml")
 path.write_text(updated)
+
+chart = Path("deploy/helm/starsync/Chart.yaml")
+if chart.exists():
+    raw = chart.read_text()
+    raw = re.sub(r'(?m)^version:\s*"?[^"\n]+"?$', f"version: {version}", raw, count=1)
+    raw = re.sub(r'(?m)^appVersion:\s*"?[^"\n]+"?$', f'appVersion: "{version}"', raw, count=1)
+    chart.write_text(raw)
 PY
 
 cargo check
@@ -92,6 +99,9 @@ echo "bumped starsync to ${VERSION}"
 
 if [[ "${DO_COMMIT}" == true ]]; then
   git add Cargo.toml Cargo.lock
+  if [[ -f deploy/helm/starsync/Chart.yaml ]]; then
+    git add deploy/helm/starsync/Chart.yaml
+  fi
   git commit -m "chore: bump version to ${VERSION}"
 fi
 
