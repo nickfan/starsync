@@ -4,6 +4,7 @@ use std::{
     collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -20,6 +21,7 @@ pub struct Config {
     pub ui_auto_extract: bool,
     pub ui_overwrite: bool,
     pub ui_backup: bool,
+    pub sync_interval: Option<Duration>,
 }
 
 impl Config {
@@ -66,6 +68,7 @@ impl Config {
             ui_auto_extract: true,
             ui_overwrite: true,
             ui_backup: true,
+            sync_interval: None,
         }
     }
 
@@ -108,6 +111,7 @@ pub struct ConfigOverrides {
     pub ui_auto_extract: Option<bool>,
     pub ui_overwrite: Option<bool>,
     pub ui_backup: Option<bool>,
+    pub sync_interval: Option<Option<Duration>>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -134,6 +138,7 @@ struct FileConfig {
     search_index_dir: Option<String>,
     ui_dir: Option<String>,
     bind: Option<String>,
+    sync_interval: Option<String>,
     github: Option<FileGithubConfig>,
     storage: Option<FileStorageConfig>,
     search: Option<FileSearchConfig>,
@@ -194,6 +199,9 @@ fn apply_file_config(config: &mut Config, file: FileConfig) -> Result<()> {
     }
     if let Some(bind) = file.bind {
         config.bind = bind;
+    }
+    if let Some(sync_interval) = file.sync_interval {
+        config.sync_interval = parse_duration_setting(&sync_interval)?;
     }
     if let Some(github) = file.github {
         if let Some(token) = github.token.filter(|value| !value.is_empty()) {
@@ -274,6 +282,9 @@ fn apply_env_map(config: &mut Config, env_map: &BTreeMap<String, String>) -> Res
     if let Some(value) = env_map.get("STARSYNC_UI_BACKUP") {
         config.ui_backup = parse_bool(value)?;
     }
+    if let Some(value) = env_map.get("STARSYNC_SYNC_INTERVAL") {
+        config.sync_interval = parse_duration_setting(value)?;
+    }
     Ok(())
 }
 
@@ -313,6 +324,9 @@ fn apply_overrides(config: &mut Config, overrides: ConfigOverrides) {
     }
     if let Some(ui_backup) = overrides.ui_backup {
         config.ui_backup = ui_backup;
+    }
+    if let Some(sync_interval) = overrides.sync_interval {
+        config.sync_interval = sync_interval;
     }
 }
 
@@ -366,6 +380,39 @@ fn parse_bool(value: &str) -> Result<bool> {
         "0" | "false" | "no" | "off" => Ok(false),
         other => Err(anyhow!("invalid boolean value: {other}")),
     }
+}
+
+pub(crate) fn parse_duration_setting(value: &str) -> Result<Option<Duration>> {
+    let value = value.trim();
+    if value.is_empty()
+        || matches!(
+            value.to_ascii_lowercase().as_str(),
+            "0" | "off" | "false" | "none" | "disabled"
+        )
+    {
+        return Ok(None);
+    }
+    parse_duration(value).map(Some)
+}
+
+fn parse_duration(value: &str) -> Result<Duration> {
+    let value = value.trim();
+    let split_at = value
+        .find(|ch: char| !ch.is_ascii_digit())
+        .unwrap_or(value.len());
+    let (number, unit) = value.split_at(split_at);
+    let amount = number
+        .parse::<u64>()
+        .with_context(|| format!("invalid duration value: {value}"))?;
+    let millis = match unit.trim().to_ascii_lowercase().as_str() {
+        "" | "ms" | "millisecond" | "milliseconds" => amount,
+        "s" | "sec" | "secs" | "second" | "seconds" => amount.saturating_mul(1_000),
+        "m" | "min" | "mins" | "minute" | "minutes" => amount.saturating_mul(60_000),
+        "h" | "hr" | "hrs" | "hour" | "hours" => amount.saturating_mul(3_600_000),
+        "d" | "day" | "days" => amount.saturating_mul(86_400_000),
+        other => return Err(anyhow!("unsupported duration unit in {value}: {other}")),
+    };
+    Ok(Duration::from_millis(millis))
 }
 
 fn expand_path(value: &str) -> PathBuf {
@@ -500,5 +547,29 @@ token = "${STARSYNC_GITHUB_TOKEN}"
         assert!(config.ui_auto_extract);
         assert!(config.ui_overwrite);
         assert!(config.ui_backup);
+    }
+
+    #[test]
+    fn sync_interval_follows_config_env_and_cli_precedence() {
+        let defaults = Config::defaults();
+        let file = FileConfig {
+            sync_interval: Some("1h".to_string()),
+            ..FileConfig::default()
+        };
+        let mut env = BTreeMap::new();
+        env.insert("STARSYNC_SYNC_INTERVAL".to_string(), "15m".to_string());
+        let overrides = ConfigOverrides {
+            sync_interval: Some(Some(Duration::from_secs(30))),
+            ..ConfigOverrides::default()
+        };
+
+        let config = resolve_config(defaults, file, &BTreeMap::new(), &env, overrides).unwrap();
+
+        assert_eq!(config.sync_interval, Some(Duration::from_secs(30)));
+        assert_eq!(parse_duration_setting("off").unwrap(), None);
+        assert_eq!(
+            parse_duration_setting("250ms").unwrap(),
+            Some(Duration::from_millis(250))
+        );
     }
 }

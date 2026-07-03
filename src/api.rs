@@ -25,6 +25,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::BroadcastStream;
@@ -132,8 +133,92 @@ pub async fn serve(service: StarSyncService) -> anyhow::Result<()> {
     if ui_dir.is_some() {
         println!("StarSync Web UI available at {}", local_url(bind, "/ui/"));
     }
+    start_auto_sync(service.clone(), config.sync_interval);
     axum::serve(listener, router_with_ui(service, ui_dir)).await?;
     Ok(())
+}
+
+fn start_auto_sync(service: StarSyncService, interval: Option<Duration>) {
+    let Some(interval) = interval else {
+        return;
+    };
+    if service.config().github_token.is_none() {
+        println!(
+            "StarSync auto sync configured for every {} but disabled because no GitHub token is configured",
+            format_duration(interval)
+        );
+        tracing::warn!(
+            interval_ms = interval.as_millis(),
+            "auto sync disabled because GitHub token is not configured"
+        );
+        return;
+    }
+    println!(
+        "StarSync auto sync enabled every {}",
+        format_duration(interval)
+    );
+    tracing::info!(
+        interval_ms = interval.as_millis(),
+        "StarSync auto sync enabled"
+    );
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            run_auto_sync_once(&service).await;
+        }
+    });
+}
+
+async fn run_auto_sync_once(service: &StarSyncService) {
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let events = service.events();
+    events.emit(StarSyncEvent::TaskStarted {
+        job_id: job_id.clone(),
+        kind: "auto_sync".to_string(),
+    });
+    match service.sync().await {
+        Ok(report) => {
+            let summary = if report.no_changes {
+                format!("no changes, {} current", report.total_current)
+            } else {
+                format!(
+                    "+{} -{} {} updated, {} current",
+                    report.added, report.removed, report.updated, report.total_current
+                )
+            };
+            events.emit(StarSyncEvent::TaskCompleted {
+                job_id,
+                kind: "auto_sync".to_string(),
+                summary,
+            });
+        }
+        Err(error) => {
+            let message = error.to_string();
+            events.emit(StarSyncEvent::TaskFailed {
+                job_id,
+                kind: "auto_sync".to_string(),
+                message: message.clone(),
+            });
+            events.emit(StarSyncEvent::Error { message });
+        }
+    }
+}
+
+fn format_duration(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds >= 86_400 && seconds.is_multiple_of(86_400) {
+        format!("{}d", seconds / 86_400)
+    } else if seconds >= 3_600 && seconds.is_multiple_of(3_600) {
+        format!("{}h", seconds / 3_600)
+    } else if seconds >= 60 && seconds.is_multiple_of(60) {
+        format!("{}m", seconds / 60)
+    } else if seconds > 0 {
+        format!("{seconds}s")
+    } else {
+        format!("{}ms", duration.as_millis())
+    }
 }
 
 async fn ui_home() -> Redirect {

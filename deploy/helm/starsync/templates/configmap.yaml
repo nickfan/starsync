@@ -13,4 +13,7 @@ data:
   STARSYNC_STORAGE_BACKEND: {{ .Values.config.storageBackend | quote }}
   STARSYNC_UI_ENABLED: {{ .Values.config.uiEnabled | quote }}
   STARSYNC_UI_AUTO_EXTRACT: {{ .Values.config.uiAutoExtract | quote }}
+  {{- if .Values.config.syncInterval }}
+  STARSYNC_SYNC_INTERVAL: {{ .Values.config.syncInterval | quote }}
+  {{- end }}
   RUST_LOG: {{ .Values.config.rustLog | quote }}

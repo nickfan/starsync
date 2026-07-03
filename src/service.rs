@@ -17,7 +17,11 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -27,6 +31,7 @@ pub struct StarSyncService {
     events: EventBus,
     search_index: TantivyIndex,
     cache: RepoCache,
+    sync_lock: Arc<Mutex<()>>,
 }
 
 impl StarSyncService {
@@ -40,6 +45,7 @@ impl StarSyncService {
             events,
             search_index,
             cache: RepoCache::new(),
+            sync_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -136,6 +142,7 @@ impl StarSyncService {
     }
 
     pub async fn sync(&self) -> Result<SyncReport> {
+        let _guard = self.sync_lock.lock().await;
         let token =
             self.config.github_token.clone().ok_or_else(|| {
                 anyhow!("STARSYNC_GITHUB_TOKEN or github.token is required for sync")

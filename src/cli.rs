@@ -1,6 +1,6 @@
 use crate::{
     api,
-    config::{Config, ConfigOverrides, StorageBackendKind},
+    config::{parse_duration_setting, Config, ConfigOverrides, StorageBackendKind},
     mcp,
     models::{MetaPatch, RepoFilters, RepoIdentity, SortDirection},
     openapi,
@@ -54,6 +54,8 @@ pub struct ConfigArgs {
     pub ui_overwrite: Option<bool>,
     #[arg(long, global = true, env = "STARSYNC_UI_BACKUP")]
     pub ui_backup: Option<bool>,
+    #[arg(long, global = true, env = "STARSYNC_SYNC_INTERVAL")]
+    pub sync_interval: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -337,6 +339,11 @@ impl ConfigArgs {
             ui_auto_extract: self.ui_auto_extract,
             ui_overwrite: self.ui_overwrite,
             ui_backup: self.ui_backup,
+            sync_interval: self
+                .sync_interval
+                .as_deref()
+                .map(parse_duration_setting)
+                .transpose()?,
         })
     }
 }

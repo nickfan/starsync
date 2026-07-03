@@ -35,6 +35,7 @@ config:
   storageBackend: local
   uiEnabled: true
   uiAutoExtract: true
+  syncInterval: ""
   rustLog: info
 
 secret:

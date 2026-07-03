@@ -280,6 +280,7 @@ STARSYNC_GITHUB_TOKEN=github_pat_xxx
 STARSYNC_DATA_DIR=/path/to/starsync/data
 STARSYNC_STATE_DIR=/path/to/starsync/state
 STARSYNC_BIND=127.0.0.1:8989
+STARSYNC_SYNC_INTERVAL=15m
 ```
 
 Then run:
@@ -312,6 +313,7 @@ STARSYNC_UI_DIR
 STARSYNC_UI_AUTO_EXTRACT
 STARSYNC_UI_OVERWRITE
 STARSYNC_UI_BACKUP
+STARSYNC_SYNC_INTERVAL
 ```
 
 `config.toml` may reference environment variables:
@@ -321,6 +323,7 @@ data_dir = "~/.starsync/data"
 state_dir = "~/.starsync/state"
 ui_dir = "~/.starsync/ui"
 bind = "127.0.0.1:8989"
+sync_interval = "15m"
 
 [github]
 token = "${STARSYNC_GITHUB_TOKEN}"
@@ -514,6 +517,11 @@ brew services start starsync
 The service runs `starsync serve` and keeps using the same default data paths:
 `~/.starsync/data`, `~/.starsync/state`, and `~/.starsync/ui`.
 
+Set `STARSYNC_SYNC_INTERVAL=15m` in `~/.config/starsync/.env` to let the
+background service poll GitHub, diff the local mirror, and fan out StarSync
+events without opening the Web UI. Supported suffixes are `ms`, `s`, `m`, `h`,
+and `d`; use `0`, `off`, or `false` to disable.
+
 ### systemd --user Service
 
 Linux users who do not want Homebrew services can install the user unit:
@@ -669,6 +677,9 @@ GET  /openapi.json
 background tasks and return `202 Accepted` with a `job_id`.
 Watch `GET /events`, `GET /events/recent`, or
 webhook subscriptions for `task.started`, `task.completed`, and `task.failed`.
+Webhook deliveries include `x-starsync-event`, `x-starsync-delivery`, and
+optional `x-starsync-signature-256` headers. Transient delivery failures are
+retried with short backoff before `last_delivery` is recorded.
 
 Example:
 

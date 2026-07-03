@@ -359,6 +359,8 @@ pub struct WebhookDeliveryState {
     pub success: bool,
     pub status: Option<u16>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub attempts: u32,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

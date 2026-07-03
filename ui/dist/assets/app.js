@@ -427,6 +427,7 @@ function eventDetails(event) {
 
 function taskLabel(kind) {
   if (kind === "sync") return "Sync Stars";
+  if (kind === "auto_sync") return "Auto Sync";
   if (kind === "enrich_readme" || kind === "enrich") return "Enrich README";
   if (kind === "enrich_lists") return "Enrich Lists";
   return kind || "Task";

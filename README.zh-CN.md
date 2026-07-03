@@ -278,6 +278,7 @@ STARSYNC_GITHUB_TOKEN=github_pat_xxx
 STARSYNC_DATA_DIR=/path/to/starsync/data
 STARSYNC_STATE_DIR=/path/to/starsync/state
 STARSYNC_BIND=127.0.0.1:8989
+STARSYNC_SYNC_INTERVAL=15m
 ```
 
 然后运行：
@@ -310,6 +311,7 @@ STARSYNC_UI_DIR
 STARSYNC_UI_AUTO_EXTRACT
 STARSYNC_UI_OVERWRITE
 STARSYNC_UI_BACKUP
+STARSYNC_SYNC_INTERVAL
 ```
 
 `config.toml` 支持环境变量插值：
@@ -319,6 +321,7 @@ data_dir = "~/.starsync/data"
 state_dir = "~/.starsync/state"
 ui_dir = "~/.starsync/ui"
 bind = "127.0.0.1:8989"
+sync_interval = "15m"
 
 [github]
 token = "${STARSYNC_GITHUB_TOKEN}"
@@ -511,6 +514,11 @@ brew services start starsync
 这个 service 运行的是 `starsync serve`，仍然使用默认数据路径：
 `~/.starsync/data`、`~/.starsync/state` 和 `~/.starsync/ui`。
 
+在 `~/.config/starsync/.env` 中设置 `STARSYNC_SYNC_INTERVAL=15m` 后，
+后台 service 会定时轮询 GitHub、对本地 mirror 做 diff，并通过 StarSync
+事件流和 webhook subscriptions 分发变更，不需要打开 Web UI。支持 `ms`、`s`、
+`m`、`h`、`d` 后缀；使用 `0`、`off` 或 `false` 可以关闭。
+
 ### systemd --user Service
 
 不使用 Homebrew services 的 Linux 用户可以安装用户级 unit：
@@ -662,6 +670,8 @@ GET  /openapi.json
 `POST /sync`、`POST /enrich/readme` 和 `POST /enrich/lists` 会把任务放进后台队列，
 并返回带 `job_id` 的 `202 Accepted`。可以通过 `GET /events`、`GET /events/recent`
 或 webhook 订阅监听 `task.started`、`task.completed`、`task.failed`。
+Webhook 投递会带上 `x-starsync-event`、`x-starsync-delivery` 和可选的
+`x-starsync-signature-256` header；临时失败会短退避重试，再记录到 `last_delivery`。
 
 示例：
 

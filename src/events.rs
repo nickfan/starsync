@@ -319,35 +319,63 @@ async fn deliver_webhook(
     subscription: &EventSubscriptionRecord,
     envelope: &EventEnvelope,
 ) -> WebhookDeliveryState {
-    let delivered_at = Utc::now();
     let payload = match serde_json::to_vec(envelope) {
         Ok(payload) => payload,
         Err(error) => {
             return WebhookDeliveryState {
-                delivered_at,
+                delivered_at: Utc::now(),
                 success: false,
                 status: None,
                 error: Some(error.to_string()),
+                attempts: 0,
             }
         }
     };
+    let mut last = None;
+    for attempt in 1..=3 {
+        let delivery = send_webhook_once(subscription, envelope, &payload, attempt).await;
+        let should_retry = should_retry_delivery(&delivery);
+        if delivery.success || !should_retry || attempt == 3 {
+            return delivery;
+        }
+        last = Some(delivery);
+        tokio::time::sleep(std::time::Duration::from_millis(250 * attempt as u64)).await;
+    }
+    last.unwrap_or(WebhookDeliveryState {
+        delivered_at: Utc::now(),
+        success: false,
+        status: None,
+        error: Some("webhook delivery did not run".to_string()),
+        attempts: 0,
+    })
+}
+
+async fn send_webhook_once(
+    subscription: &EventSubscriptionRecord,
+    envelope: &EventEnvelope,
+    payload: &[u8],
+    attempt: u32,
+) -> WebhookDeliveryState {
+    let delivered_at = Utc::now();
     let mut request = reqwest::Client::new()
         .post(&subscription.url)
         .header("content-type", "application/json")
         .header("x-starsync-event", &envelope.name)
         .header("x-starsync-delivery", &envelope.id)
-        .body(payload.clone());
+        .body(payload.to_vec());
     if let Some(secret) = &subscription.secret {
-        request = request.header("x-starsync-signature-256", signature(secret, &payload));
+        request = request.header("x-starsync-signature-256", signature(secret, payload));
     }
     match request.send().await {
         Ok(response) => {
             let status = response.status().as_u16();
+            let success = response.status().is_success();
             WebhookDeliveryState {
                 delivered_at,
-                success: response.status().is_success(),
+                success,
                 status: Some(status),
-                error: None,
+                error: (!success).then(|| format!("HTTP {status}")),
+                attempts: attempt,
             }
         }
         Err(error) => WebhookDeliveryState {
@@ -355,7 +383,19 @@ async fn deliver_webhook(
             success: false,
             status: None,
             error: Some(error.to_string()),
+            attempts: attempt,
         },
+    }
+}
+
+fn should_retry_delivery(delivery: &WebhookDeliveryState) -> bool {
+    if delivery.success {
+        return false;
+    }
+    match delivery.status {
+        None => true,
+        Some(408 | 429) => true,
+        Some(status) => status >= 500,
     }
 }
 
@@ -407,5 +447,34 @@ mod tests {
 
         bus.delete_subscription(&sub.id).unwrap();
         assert!(bus.list_subscriptions().is_empty());
+    }
+
+    #[test]
+    fn webhook_retry_policy_retries_transient_failures_only() {
+        let retryable = WebhookDeliveryState {
+            delivered_at: Utc::now(),
+            success: false,
+            status: Some(503),
+            error: Some("HTTP 503".to_string()),
+            attempts: 1,
+        };
+        let permanent = WebhookDeliveryState {
+            delivered_at: Utc::now(),
+            success: false,
+            status: Some(400),
+            error: Some("HTTP 400".to_string()),
+            attempts: 1,
+        };
+        let network = WebhookDeliveryState {
+            delivered_at: Utc::now(),
+            success: false,
+            status: None,
+            error: Some("timeout".to_string()),
+            attempts: 1,
+        };
+
+        assert!(should_retry_delivery(&retryable));
+        assert!(should_retry_delivery(&network));
+        assert!(!should_retry_delivery(&permanent));
     }
 }
