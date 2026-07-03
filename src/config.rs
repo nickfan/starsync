@@ -18,6 +18,8 @@ pub struct Config {
     pub git_remote: Option<String>,
     pub ui_enabled: bool,
     pub ui_auto_extract: bool,
+    pub ui_overwrite: bool,
+    pub ui_backup: bool,
 }
 
 impl Config {
@@ -62,6 +64,8 @@ impl Config {
             search_index_dir: None,
             ui_enabled: true,
             ui_auto_extract: true,
+            ui_overwrite: true,
+            ui_backup: true,
         }
     }
 
@@ -102,6 +106,8 @@ pub struct ConfigOverrides {
     pub git_remote: Option<String>,
     pub ui_enabled: Option<bool>,
     pub ui_auto_extract: Option<bool>,
+    pub ui_overwrite: Option<bool>,
+    pub ui_backup: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -155,6 +161,8 @@ struct FileUiConfig {
     enabled: Option<bool>,
     dir: Option<String>,
     auto_extract: Option<bool>,
+    overwrite: Option<bool>,
+    backup: Option<bool>,
 }
 
 fn resolve_config(
@@ -215,6 +223,12 @@ fn apply_file_config(config: &mut Config, file: FileConfig) -> Result<()> {
         if let Some(auto_extract) = ui.auto_extract {
             config.ui_auto_extract = auto_extract;
         }
+        if let Some(overwrite) = ui.overwrite {
+            config.ui_overwrite = overwrite;
+        }
+        if let Some(backup) = ui.backup {
+            config.ui_backup = backup;
+        }
     }
     Ok(())
 }
@@ -254,6 +268,12 @@ fn apply_env_map(config: &mut Config, env_map: &BTreeMap<String, String>) -> Res
     if let Some(value) = env_map.get("STARSYNC_UI_AUTO_EXTRACT") {
         config.ui_auto_extract = parse_bool(value)?;
     }
+    if let Some(value) = env_map.get("STARSYNC_UI_OVERWRITE") {
+        config.ui_overwrite = parse_bool(value)?;
+    }
+    if let Some(value) = env_map.get("STARSYNC_UI_BACKUP") {
+        config.ui_backup = parse_bool(value)?;
+    }
     Ok(())
 }
 
@@ -287,6 +307,12 @@ fn apply_overrides(config: &mut Config, overrides: ConfigOverrides) {
     }
     if let Some(ui_auto_extract) = overrides.ui_auto_extract {
         config.ui_auto_extract = ui_auto_extract;
+    }
+    if let Some(ui_overwrite) = overrides.ui_overwrite {
+        config.ui_overwrite = ui_overwrite;
+    }
+    if let Some(ui_backup) = overrides.ui_backup {
+        config.ui_backup = ui_backup;
     }
 }
 
@@ -450,14 +476,20 @@ token = "${STARSYNC_GITHUB_TOKEN}"
                 enabled: Some(false),
                 dir: Some("~/from-config-ui".to_string()),
                 auto_extract: Some(false),
+                overwrite: Some(false),
+                backup: Some(false),
             }),
             ..FileConfig::default()
         };
         let mut env = BTreeMap::new();
         env.insert("STARSYNC_UI_ENABLED".to_string(), "true".to_string());
         env.insert("STARSYNC_UI_DIR".to_string(), "/from-env-ui".to_string());
+        env.insert("STARSYNC_UI_OVERWRITE".to_string(), "false".to_string());
+        env.insert("STARSYNC_UI_BACKUP".to_string(), "false".to_string());
         let overrides = ConfigOverrides {
             ui_auto_extract: Some(true),
+            ui_overwrite: Some(true),
+            ui_backup: Some(true),
             ..ConfigOverrides::default()
         };
 
@@ -466,5 +498,7 @@ token = "${STARSYNC_GITHUB_TOKEN}"
         assert!(config.ui_enabled);
         assert_eq!(config.ui_dir, PathBuf::from("/from-env-ui"));
         assert!(config.ui_auto_extract);
+        assert!(config.ui_overwrite);
+        assert!(config.ui_backup);
     }
 }

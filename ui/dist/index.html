@@ -13,74 +13,188 @@
           <p class="eyebrow">StarSync</p>
           <h1>Repository Console</h1>
         </div>
-        <div class="status" id="status">Connecting</div>
+        <div class="top-actions">
+          <a class="button secondary" href="/openapi.yaml">OpenAPI YAML</a>
+          <div class="status" id="status">Connecting</div>
+        </div>
       </header>
 
-      <section class="toolbar" aria-label="Repository actions">
-        <button id="syncButton" type="button">Sync Stars</button>
-        <button id="enrichButton" type="button">Enrich README</button>
-        <a class="button secondary" href="/openapi.yaml">OpenAPI YAML</a>
-      </section>
+      <div class="workspace">
+        <div class="primary-column">
+          <section class="search-panel" aria-label="Search repositories">
+            <div class="search-row">
+              <input
+                id="query"
+                type="search"
+                autocomplete="off"
+                placeholder='Search, e.g. owner:nickfan AND name:T*'
+              />
+              <button id="searchButton" type="button">Search</button>
+              <button id="clearButton" class="secondary" type="button">Clear</button>
+            </div>
+            <div class="filters">
+              <label>
+                Owner
+                <input id="owner" autocomplete="off" />
+              </label>
+              <label>
+                Language
+                <input id="language" autocomplete="off" />
+              </label>
+              <label>
+                Topic
+                <input id="topic" autocomplete="off" />
+              </label>
+              <label>
+                Tag
+                <input id="tag" autocomplete="off" />
+              </label>
+              <label>
+                Status
+                <select id="repoStatus">
+                  <option value="">Any</option>
+                  <option value="evaluating">Evaluating</option>
+                  <option value="keep">Keep</option>
+                  <option value="later">Later</option>
+                  <option value="reference">Reference</option>
+                  <option value="archived">Archived</option>
+                  <option value="ignored">Ignored</option>
+                </select>
+              </label>
+              <label>
+                Visibility
+                <select id="archived">
+                  <option value="">Current</option>
+                  <option value="true">Archived</option>
+                  <option value="false">Not archived</option>
+                </select>
+              </label>
+            </div>
+          </section>
 
-      <section class="search-panel" aria-label="Search repositories">
-        <div class="search-row">
-          <input
-            id="query"
-            type="search"
-            autocomplete="off"
-            placeholder='Search, e.g. owner:nickfan AND name:T*'
-          />
-          <button id="searchButton" type="button">Search</button>
-        </div>
-        <div class="filters">
-          <label>
-            Owner
-            <input id="owner" autocomplete="off" />
-          </label>
-          <label>
-            Language
-            <input id="language" autocomplete="off" />
-          </label>
-          <label>
-            Tag
-            <input id="tag" autocomplete="off" />
-          </label>
-          <label>
-            Status
-            <input id="repoStatus" autocomplete="off" />
-          </label>
-          <label>
-            Sort
-            <select id="sort">
-              <option value="">Relevance</option>
-              <option value="updated">Updated</option>
-              <option value="created">Starred</option>
-              <option value="name">Name</option>
-              <option value="stars">Stars</option>
-            </select>
-          </label>
-          <label>
-            Direction
-            <select id="direction">
-              <option value="desc">Desc</option>
-              <option value="asc">Asc</option>
-            </select>
-          </label>
-        </div>
-      </section>
+          <section class="list-tools" aria-label="List tools">
+            <div class="sort-chips" role="group" aria-label="Sort repositories">
+              <button class="sort-chip" type="button" data-sort="updated">
+                Updated
+              </button>
+              <button class="sort-chip" type="button" data-sort="created">
+                Starred
+              </button>
+              <button class="sort-chip" type="button" data-sort="stars">
+                Stars
+              </button>
+              <button class="sort-chip" type="button" data-sort="name">
+                Name
+              </button>
+            </div>
+            <label>
+              Direction
+              <select id="direction">
+                <option value="desc">Desc</option>
+                <option value="asc">Asc</option>
+              </select>
+            </label>
+            <label>
+              Per page
+              <select id="perPage">
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+              </select>
+            </label>
+          </section>
 
-      <section class="summary" aria-label="Repository summary">
-        <div>
-          <span id="resultCount">0</span>
-          <small>visible results</small>
-        </div>
-        <div>
-          <span id="nextCursor">-</span>
-          <small>next cursor</small>
-        </div>
-      </section>
+          <section class="summary" aria-label="Repository summary">
+            <div>
+              <span id="totalCount">0</span>
+              <small>total matches</small>
+            </div>
+            <div>
+              <span id="visibleRange">0</span>
+              <small>visible range</small>
+            </div>
+            <div>
+              <span id="pageNumber">1</span>
+              <small>page</small>
+            </div>
+          </section>
 
-      <section class="results" id="results" aria-live="polite"></section>
+          <section class="results" id="results" aria-live="polite"></section>
+
+          <nav class="pager" aria-label="Repository pages">
+            <button id="prevPage" class="secondary" type="button">Previous</button>
+            <button id="nextPage" class="secondary" type="button">Next</button>
+          </nav>
+        </div>
+
+        <aside class="side-column" aria-label="Operations">
+          <section class="ops-card">
+            <div class="card-heading">
+              <h2>Service</h2>
+              <span id="serviceVersion">-</span>
+            </div>
+            <dl class="facts">
+              <div>
+                <dt>State</dt>
+                <dd id="serviceState">Connecting</dd>
+              </div>
+              <div>
+                <dt>Last event</dt>
+                <dd id="lastEvent">-</dd>
+              </div>
+              <div>
+                <dt>Next auto sync</dt>
+                <dd id="nextAutoSync">Off</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="ops-card">
+            <div class="card-heading">
+              <h2>Tasks</h2>
+              <span id="taskCount">0 running</span>
+            </div>
+            <div class="task-actions">
+              <button
+                id="syncButton"
+                type="button"
+                title="Pull GitHub starred repositories into the local mirror."
+              >
+                Sync Stars
+              </button>
+              <button
+                id="enrichButton"
+                class="secondary"
+                type="button"
+                title="Fetch README snippets for current starred repositories and rebuild search."
+              >
+                Enrich README
+              </button>
+            </div>
+            <label>
+              Auto sync
+              <select id="autoSync">
+                <option value="0">Off</option>
+                <option value="900000">15 min</option>
+                <option value="3600000">1 hour</option>
+                <option value="21600000">6 hours</option>
+              </select>
+            </label>
+            <div class="task-list" id="taskList" aria-live="polite"></div>
+          </section>
+
+          <section class="ops-card">
+            <div class="card-heading">
+              <h2>Events</h2>
+              <button id="refreshEvents" class="ghost" type="button">Refresh</button>
+            </div>
+            <div class="event-list" id="eventList" aria-live="polite"></div>
+          </section>
+        </aside>
+      </div>
+
+      <div class="toasts" id="toasts" aria-live="polite"></div>
     </main>
     <script src="./assets/app.js" type="module"></script>
   </body>

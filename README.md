@@ -268,6 +268,8 @@ STARSYNC_SEARCH_INDEX_DIR
 STARSYNC_UI_ENABLED
 STARSYNC_UI_DIR
 STARSYNC_UI_AUTO_EXTRACT
+STARSYNC_UI_OVERWRITE
+STARSYNC_UI_BACKUP
 ```
 
 `config.toml` may reference environment variables:
@@ -293,6 +295,8 @@ index_dir = "~/.starsync/state/search"
 enabled = true
 dir = "~/.starsync/ui"
 auto_extract = true
+overwrite = true
+backup = true
 ```
 
 Never commit tokens into the metadata Git repository.
@@ -411,10 +415,16 @@ StarSync REST API listening on http://127.0.0.1:8989
 StarSync Web UI available at http://127.0.0.1:8989/ui/
 ```
 
-By default the compiled binary carries a small static UI bundle. When
-`~/.starsync/ui/index.html` is missing, `serve` extracts the bundled UI into
-`~/.starsync/ui` and serves it from `/ui/`. Existing files are left alone, so
-you can replace that directory with a custom frontend.
+By default the compiled binary carries a small static UI bundle. `serve`
+extracts the bundled UI into `~/.starsync/ui` and serves it from `/ui/`.
+When the existing UI marker does not match the embedded bundle fingerprint,
+StarSync refreshes the default UI because `ui.overwrite = true` by default.
+Before refreshing, it backs up the previous UI directory to a sibling path such
+as `ui.bak-20260703T120000Z` when `ui.backup = true`.
+
+Set `ui.overwrite = false` or `STARSYNC_UI_OVERWRITE=false` when you manage a
+fully custom frontend. Set `ui.backup = false` or `STARSYNC_UI_BACKUP=false`
+when you want refreshes without creating backup directories.
 
 Useful UI flags:
 
@@ -422,6 +432,8 @@ Useful UI flags:
 starsync serve --ui-dir ~/.starsync/ui
 starsync serve --no-ui
 starsync serve --no-ui-extract
+starsync serve --no-ui-overwrite
+starsync serve --no-ui-backup
 ```
 
 ## Data layout

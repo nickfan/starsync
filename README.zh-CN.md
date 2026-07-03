@@ -266,6 +266,8 @@ STARSYNC_SEARCH_INDEX_DIR
 STARSYNC_UI_ENABLED
 STARSYNC_UI_DIR
 STARSYNC_UI_AUTO_EXTRACT
+STARSYNC_UI_OVERWRITE
+STARSYNC_UI_BACKUP
 ```
 
 `config.toml` 支持环境变量插值：
@@ -291,6 +293,8 @@ index_dir = "~/.starsync/state/search"
 enabled = true
 dir = "~/.starsync/ui"
 auto_extract = true
+overwrite = true
+backup = true
 ```
 
 不要把 token 提交进 metadata Git 仓库。
@@ -409,10 +413,15 @@ StarSync REST API listening on http://127.0.0.1:8989
 StarSync Web UI available at http://127.0.0.1:8989/ui/
 ```
 
-默认情况下，编译后的单个 binary 内置了一份小型静态 UI 包。当
-`~/.starsync/ui/index.html` 不存在时，`serve` 会把内置 UI 解包到
-`~/.starsync/ui`，并从 `/ui/` 提供静态访问。已有文件不会被启动时覆盖，
-所以你可以把这个目录替换成自己的前端界面。
+默认情况下，编译后的单个 binary 内置了一份小型静态 UI 包。`serve` 会把
+内置 UI 解包到 `~/.starsync/ui`，并从 `/ui/` 提供静态访问。当已有 UI 的
+marker 与内置 bundle 指纹不一致时，因为默认 `ui.overwrite = true`，
+StarSync 会刷新默认 UI；刷新前如果 `ui.backup = true`，会先把旧目录备份到
+同级路径，例如 `ui.bak-20260703T120000Z`。
+
+如果你在维护完全自定义的前端，可以设置 `ui.overwrite = false` 或
+`STARSYNC_UI_OVERWRITE=false`。如果你希望刷新时不产生备份目录，可以设置
+`ui.backup = false` 或 `STARSYNC_UI_BACKUP=false`。
 
 常用 UI 参数：
 
@@ -420,6 +429,8 @@ StarSync Web UI available at http://127.0.0.1:8989/ui/
 starsync serve --ui-dir ~/.starsync/ui
 starsync serve --no-ui
 starsync serve --no-ui-extract
+starsync serve --no-ui-overwrite
+starsync serve --no-ui-backup
 ```
 
 ## 数据目录

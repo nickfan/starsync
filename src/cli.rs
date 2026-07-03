@@ -50,6 +50,10 @@ pub struct ConfigArgs {
     pub ui_enabled: Option<bool>,
     #[arg(long, global = true, env = "STARSYNC_UI_AUTO_EXTRACT")]
     pub ui_auto_extract: Option<bool>,
+    #[arg(long, global = true, env = "STARSYNC_UI_OVERWRITE")]
+    pub ui_overwrite: Option<bool>,
+    #[arg(long, global = true, env = "STARSYNC_UI_BACKUP")]
+    pub ui_backup: Option<bool>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -161,6 +165,10 @@ pub struct ServeArgs {
     pub ui_dir: Option<PathBuf>,
     #[arg(long)]
     pub no_ui_extract: bool,
+    #[arg(long)]
+    pub no_ui_overwrite: bool,
+    #[arg(long)]
+    pub no_ui_backup: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -311,6 +319,8 @@ impl ConfigArgs {
             git_remote: self.git_remote,
             ui_enabled: self.ui_enabled,
             ui_auto_extract: self.ui_auto_extract,
+            ui_overwrite: self.ui_overwrite,
+            ui_backup: self.ui_backup,
         })
     }
 }
@@ -325,6 +335,12 @@ impl ServeArgs {
         }
         if self.no_ui_extract {
             config.ui_auto_extract = false;
+        }
+        if self.no_ui_overwrite {
+            config.ui_overwrite = false;
+        }
+        if self.no_ui_backup {
+            config.ui_backup = false;
         }
     }
 }

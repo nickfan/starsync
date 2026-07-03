@@ -88,7 +88,29 @@ pub async fn serve(service: StarSyncService) -> anyhow::Result<()> {
     let config = service.config().clone();
     let ui_dir = if config.ui_enabled {
         let status = crate::ui::prepare_ui(&config)?;
-        if status.extracted {
+        if status.overwritten {
+            if let Some(backup_dir) = &status.backup_dir {
+                println!(
+                    "StarSync Web UI refreshed at {} after backing up old UI to {}",
+                    status.dir.display(),
+                    backup_dir.display()
+                );
+                tracing::info!(
+                    ui_dir = %status.dir.display(),
+                    backup_dir = %backup_dir.display(),
+                    "StarSync Web UI refreshed with backup"
+                );
+            } else {
+                println!(
+                    "StarSync Web UI refreshed at {} without backup",
+                    status.dir.display()
+                );
+                tracing::info!(
+                    ui_dir = %status.dir.display(),
+                    "StarSync Web UI refreshed without backup"
+                );
+            }
+        } else if status.extracted {
             println!("StarSync Web UI extracted to {}", status.dir.display());
             tracing::info!(ui_dir = %status.dir.display(), "StarSync Web UI extracted");
         }
