@@ -248,6 +248,10 @@ pub fn event_name(event: &StarSyncEvent) -> &'static str {
         StarSyncEvent::MetaChanged { .. } => "meta.changed",
         StarSyncEvent::ReadmeEnriched { .. } => "readme.enriched",
         StarSyncEvent::SyncCompleted { .. } => "sync.completed",
+        StarSyncEvent::SyncNoChanges { .. } => "sync.no_changes",
+        StarSyncEvent::ListsEnriched { .. } => "lists.enriched",
+        StarSyncEvent::IndexRebuildStarted => "index.rebuild.started",
+        StarSyncEvent::IndexRebuildCompleted { .. } => "index.rebuild.completed",
         StarSyncEvent::StorageChanged { .. } => "storage.changed",
         StarSyncEvent::Error { .. } => "error",
     }

@@ -23,6 +23,7 @@ const els = {
   nextAutoSync: document.querySelector("#nextAutoSync"),
   syncButton: document.querySelector("#syncButton"),
   enrichButton: document.querySelector("#enrichButton"),
+  enrichListsButton: document.querySelector("#enrichListsButton"),
   searchButton: document.querySelector("#searchButton"),
   clearButton: document.querySelector("#clearButton"),
   query: document.querySelector("#query"),
@@ -30,8 +31,10 @@ const els = {
   language: document.querySelector("#language"),
   topic: document.querySelector("#topic"),
   tag: document.querySelector("#tag"),
+  list: document.querySelector("#list"),
   repoStatus: document.querySelector("#repoStatus"),
   archived: document.querySelector("#archived"),
+  activeFilters: document.querySelector("#activeFilters"),
   sortPreset: document.querySelector("#sortPreset"),
   perPage: document.querySelector("#perPage"),
   totalCount: document.querySelector("#totalCount"),
@@ -115,6 +118,7 @@ function paramsFromForm() {
     ["language", els.language.value],
     ["topic", els.topic.value],
     ["tag", els.tag.value],
+    ["list", els.list.value],
     ["status", els.repoStatus.value],
     ["archived", els.archived.value],
     ["sort", state.sort],
@@ -142,9 +146,65 @@ function repoDescription(repo) {
 }
 
 function repoTags(repo) {
-  const topics = repo.topics || [];
-  const tags = repo.user?.tags || [];
-  return [...new Set([...tags, ...topics])].slice(0, 8);
+  const seen = new Set();
+  const chips = [];
+  const push = (kind, value) => {
+    const label = String(value || "").trim();
+    if (!label) return;
+    const key = `${kind}:${label.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    chips.push({ kind, label });
+  };
+  for (const tag of repo.user?.tags || []) push("tag", tag);
+  for (const list of repo.user?.lists || []) push("list", list);
+  for (const list of repo.github_lists || []) push("list", list);
+  for (const topic of repo.topics || []) push("topic", topic);
+  return chips.slice(0, 12);
+}
+
+function filterFields() {
+  return [
+    { key: "owner", label: "owner", el: els.owner },
+    { key: "language", label: "language", el: els.language },
+    { key: "topic", label: "topic", el: els.topic },
+    { key: "tag", label: "tag", el: els.tag },
+    { key: "list", label: "list", el: els.list },
+    { key: "status", label: "status", el: els.repoStatus },
+    { key: "archived", label: "visibility", el: els.archived },
+  ];
+}
+
+function renderActiveFilters() {
+  els.activeFilters.replaceChildren();
+  for (const field of filterFields()) {
+    const value = String(field.el.value || "").trim();
+    if (!value) continue;
+    const pill = document.createElement("span");
+    pill.className = "filter-pill";
+    const label = document.createElement("span");
+    label.textContent = `${field.label}:${value}`;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.title = `Remove ${field.label} filter`;
+    remove.textContent = "x";
+    remove.addEventListener("click", () => {
+      field.el.value = "";
+      state.page = 1;
+      renderActiveFilters();
+      search();
+    });
+    pill.append(label, remove);
+    els.activeFilters.append(pill);
+  }
+}
+
+function applyChipFilter(kind, value) {
+  const target = kind === "topic" ? els.topic : kind === "tag" ? els.tag : els.list;
+  target.value = value;
+  state.page = 1;
+  renderActiveFilters();
+  search();
 }
 
 function renderSummary(payload, itemCount) {
@@ -208,8 +268,11 @@ function renderResults(payload) {
     const tagWrap = document.createElement("div");
     tagWrap.className = "tags";
     for (const tag of repoTags(repo)) {
-      const chip = document.createElement("span");
-      chip.textContent = tag;
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.textContent = tag.label;
+      chip.title = `Filter by ${tag.kind}:${tag.label}`;
+      chip.addEventListener("click", () => applyChipFilter(tag.kind, tag.label));
       tagWrap.append(chip);
     }
 
@@ -256,7 +319,9 @@ function summarizeTaskPayload(kind, payload) {
   if (payload?.accepted && payload?.job_id) {
     return `${payload.message || "Queued"} · ${payload.job_id.slice(0, 8)}`;
   }
-  return kind === "sync" ? "Sync queued" : "README enrichment queued";
+  if (kind === "sync") return "Sync queued";
+  if (kind === "enrich_lists") return "GitHub Lists enrichment queued";
+  return "README enrichment queued";
 }
 
 function renderTasks() {
@@ -297,10 +362,14 @@ function updateTaskButtons() {
     (task) => task.kind === "sync" && task.status === "running",
   );
   const hasEnrich = Array.from(state.tasks.values()).some(
-    (task) => isEnrichKind(task.kind) && task.status === "running",
+    (task) => isReadmeEnrichKind(task.kind) && task.status === "running",
+  );
+  const hasListEnrich = Array.from(state.tasks.values()).some(
+    (task) => task.kind === "enrich_lists" && task.status === "running",
   );
   els.syncButton.disabled = hasSync;
   els.enrichButton.disabled = hasEnrich;
+  els.enrichListsButton.disabled = hasListEnrich;
 }
 
 async function runTask(kind, path, label, { quiet = false } = {}) {
@@ -359,10 +428,11 @@ function eventDetails(event) {
 function taskLabel(kind) {
   if (kind === "sync") return "Sync Stars";
   if (kind === "enrich_readme" || kind === "enrich") return "Enrich README";
+  if (kind === "enrich_lists") return "Enrich Lists";
   return kind || "Task";
 }
 
-function isEnrichKind(kind) {
+function isReadmeEnrichKind(kind) {
   return kind === "enrich" || kind === "enrich_readme";
 }
 
@@ -493,18 +563,22 @@ function scheduleAutoSync() {
 }
 
 function clearFilters() {
-  for (const input of [els.query, els.owner, els.language, els.topic, els.tag]) {
+  for (const input of [els.query, els.owner, els.language, els.topic, els.tag, els.list]) {
     input.value = "";
   }
   els.repoStatus.value = "";
   els.archived.value = "";
   state.page = 1;
+  renderActiveFilters();
   search();
 }
 
-for (const input of [els.query, els.owner, els.language, els.topic, els.tag]) {
+for (const input of [els.query, els.owner, els.language, els.topic, els.tag, els.list]) {
   input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") search({ resetPage: true });
+    if (event.key === "Enter") {
+      renderActiveFilters();
+      search({ resetPage: true });
+    }
   });
 }
 
@@ -512,11 +586,15 @@ for (const select of [els.repoStatus, els.archived, els.sortPreset, els.perPage]
   select.addEventListener("change", () => {
     if (select === els.sortPreset) syncSortFromPreset();
     if (select === els.perPage) state.perPage = Number(els.perPage.value);
+    renderActiveFilters();
     search({ resetPage: true });
   });
 }
 
-els.searchButton.addEventListener("click", () => search({ resetPage: true }));
+els.searchButton.addEventListener("click", () => {
+  renderActiveFilters();
+  search({ resetPage: true });
+});
 els.clearButton.addEventListener("click", clearFilters);
 els.prevPage.addEventListener("click", () => {
   state.page = Math.max(1, state.page - 1);
@@ -532,6 +610,9 @@ els.syncButton.addEventListener("click", () => runTask("sync", "/sync", "Sync St
 els.enrichButton.addEventListener("click", () =>
   runTask("enrich", "/enrich/readme?limit=50", "Enrich README"),
 );
+els.enrichListsButton.addEventListener("click", () =>
+  runTask("enrich_lists", "/enrich/lists", "Enrich Lists"),
+);
 els.refreshEvents.addEventListener("click", () => loadEvents({ notify: true }));
 els.autoSync.addEventListener("change", scheduleAutoSync);
 
@@ -542,6 +623,7 @@ if (storedAutoSync && [...els.autoSync.options].some((option) => option.value ==
 els.sortPreset.value = `${state.sort}:${state.direction}`;
 els.perPage.value = String(state.perPage);
 renderTasks();
+renderActiveFilters();
 scheduleAutoSync();
 window.setInterval(updateAutoSyncLabel, 30000);
 window.setInterval(() => loadEvents({ notify: true }), 5000);

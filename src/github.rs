@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use futures_util::{stream, StreamExt, TryStreamExt};
 use reqwest::{header, Client, StatusCode};
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
 
 #[derive(Clone)]
@@ -150,6 +150,75 @@ impl GitHubClient {
         let text = response.text().await?;
         Ok(Some(text))
     }
+
+    pub async fn fetch_star_lists(&self) -> Result<Vec<GitHubStarList>> {
+        let mut lists = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let page: ViewerListsData = self
+                .graphql(VIEWER_LISTS_QUERY, serde_json::json!({ "after": after }))
+                .await?;
+            let connection = page.viewer.lists;
+            for list in connection.nodes {
+                let mut list = GitHubStarList::from_node(list);
+                while list.has_next_page {
+                    let page: ListItemsData = self
+                        .graphql(
+                            LIST_ITEMS_QUERY,
+                            serde_json::json!({
+                                "id": list.id,
+                                "after": list.next_cursor,
+                            }),
+                        )
+                        .await?;
+                    if let Some(node) = page.node {
+                        list.extend_items(node.items);
+                    } else {
+                        break;
+                    }
+                }
+                lists.push(list);
+            }
+            if !connection.page_info.has_next_page {
+                break;
+            }
+            after = connection.page_info.end_cursor;
+        }
+        Ok(lists)
+    }
+
+    async fn graphql<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: serde_json::Value,
+    ) -> Result<T> {
+        let response = self
+            .client
+            .post("https://api.github.com/graphql")
+            .bearer_auth(&self.token)
+            .json(&GraphQlRequest { query, variables })
+            .send()
+            .await
+            .context("failed to request GitHub GraphQL API")?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(anyhow!("GitHub GraphQL request failed: {status} {text}"));
+        }
+        let payload: GraphQlResponse<T> = response.json().await?;
+        if let Some(errors) = payload.errors.filter(|errors| !errors.is_empty()) {
+            let message = errors
+                .into_iter()
+                .map(|error| error.message)
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(anyhow!("GitHub GraphQL errors: {message}"));
+        }
+        let data = payload
+            .data
+            .ok_or_else(|| anyhow!("GitHub GraphQL response did not contain data"))?;
+        Ok(data)
+    }
 }
 
 fn github_sort(sort: RepoSort) -> &'static str {
@@ -238,14 +307,256 @@ struct GitHubOwner {
     login: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitHubStarList {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub is_private: bool,
+    pub repositories: Vec<GitHubListedRepo>,
+    has_next_page: bool,
+    next_cursor: Option<String>,
+}
+
+impl GitHubStarList {
+    fn from_node(node: UserListNode) -> Self {
+        let mut list = Self {
+            id: node.id,
+            name: node.name,
+            slug: node.slug,
+            is_private: node.is_private,
+            repositories: Vec::new(),
+            has_next_page: false,
+            next_cursor: None,
+        };
+        list.extend_items(node.items);
+        list
+    }
+
+    fn extend_items(&mut self, items: UserListItemsConnection) {
+        self.repositories.extend(
+            items
+                .nodes
+                .into_iter()
+                .filter_map(GitHubListedRepo::from_node),
+        );
+        self.has_next_page = items.page_info.has_next_page;
+        self.next_cursor = items.page_info.end_cursor;
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitHubListedRepo {
+    pub github_id: Option<i64>,
+    pub full_name: String,
+    pub html_url: Option<String>,
+    pub viewer_has_starred: bool,
+}
+
+impl GitHubListedRepo {
+    fn from_node(node: UserListItemNode) -> Option<Self> {
+        (node.typename == "Repository").then_some(Self {
+            github_id: node.database_id,
+            full_name: node.name_with_owner?,
+            html_url: node.url,
+            viewer_has_starred: node.viewer_has_starred.unwrap_or(false),
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct GraphQlRequest<'a> {
+    query: &'a str,
+    variables: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphQlResponse<T> {
+    data: Option<T>,
+    errors: Option<Vec<GraphQlError>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphQlError {
+    message: String,
+}
+
+impl std::fmt::Display for GraphQlError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ViewerListsData {
+    viewer: ViewerLists,
+}
+
+#[derive(Debug, Deserialize)]
+struct ViewerLists {
+    lists: UserListsConnection,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserListsConnection {
+    #[serde(default)]
+    nodes: Vec<UserListNode>,
+    #[serde(rename = "pageInfo")]
+    page_info: PageInfo,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserListNode {
+    id: String,
+    name: String,
+    slug: String,
+    #[serde(rename = "isPrivate")]
+    is_private: bool,
+    items: UserListItemsConnection,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListItemsData {
+    node: Option<ListItemsNode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListItemsNode {
+    items: UserListItemsConnection,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserListItemsConnection {
+    #[serde(default)]
+    nodes: Vec<UserListItemNode>,
+    #[serde(rename = "pageInfo")]
+    page_info: PageInfo,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserListItemNode {
+    #[serde(rename = "__typename")]
+    typename: String,
+    #[serde(rename = "databaseId")]
+    database_id: Option<i64>,
+    #[serde(rename = "nameWithOwner")]
+    name_with_owner: Option<String>,
+    url: Option<String>,
+    #[serde(rename = "viewerHasStarred")]
+    viewer_has_starred: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PageInfo {
+    #[serde(rename = "hasNextPage")]
+    has_next_page: bool,
+    #[serde(rename = "endCursor")]
+    end_cursor: Option<String>,
+}
+
+const VIEWER_LISTS_QUERY: &str = r#"
+query StarSyncViewerLists($after: String) {
+  viewer {
+    lists(first: 100, after: $after) {
+      nodes {
+        id
+        name
+        slug
+        isPrivate
+        items(first: 100) {
+          nodes {
+            __typename
+            ... on Repository {
+              databaseId
+              nameWithOwner
+              url
+              viewerHasStarred
+            }
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+}
+"#;
+
+const LIST_ITEMS_QUERY: &str = r#"
+query StarSyncListItems($id: ID!, $after: String) {
+  node(id: $id) {
+    ... on UserList {
+      items(first: 100, after: $after) {
+        nodes {
+          __typename
+          ... on Repository {
+            databaseId
+            nameWithOwner
+            url
+            viewerHasStarred
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+"#;
+
 #[cfg(test)]
 mod tests {
-    use super::parse_last_page;
+    use super::*;
 
     #[test]
     fn parses_last_page_from_github_link_header() {
         let link = r#"<https://api.github.com/user/starred?per_page=100&page=2>; rel="next", <https://api.github.com/user/starred?per_page=100&page=46>; rel="last""#;
 
         assert_eq!(parse_last_page(link), Some(46));
+    }
+
+    #[test]
+    fn builds_star_list_from_repository_union_nodes() {
+        let list = GitHubStarList::from_node(UserListNode {
+            id: "UL_1".to_string(),
+            name: "Toolkit".to_string(),
+            slug: "toolkit".to_string(),
+            is_private: false,
+            items: UserListItemsConnection {
+                nodes: vec![
+                    UserListItemNode {
+                        typename: "Repository".to_string(),
+                        database_id: Some(42),
+                        name_with_owner: Some("alice/toolbox".to_string()),
+                        url: Some("https://github.com/alice/toolbox".to_string()),
+                        viewer_has_starred: Some(true),
+                    },
+                    UserListItemNode {
+                        typename: "Issue".to_string(),
+                        database_id: None,
+                        name_with_owner: None,
+                        url: None,
+                        viewer_has_starred: None,
+                    },
+                ],
+                page_info: PageInfo {
+                    has_next_page: false,
+                    end_cursor: None,
+                },
+            },
+        });
+
+        assert_eq!(list.slug, "toolkit");
+        assert_eq!(list.repositories.len(), 1);
+        assert_eq!(list.repositories[0].github_id, Some(42));
+        assert_eq!(list.repositories[0].full_name, "alice/toolbox");
     }
 }

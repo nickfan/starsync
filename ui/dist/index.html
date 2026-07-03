@@ -50,6 +50,10 @@
                 <input id="tag" autocomplete="off" />
               </label>
               <label>
+                List
+                <input id="list" autocomplete="off" />
+              </label>
+              <label>
                 Status
                 <select id="repoStatus">
                   <option value="">Any</option>
@@ -70,6 +74,7 @@
                 </select>
               </label>
             </div>
+            <div class="active-filters" id="activeFilters" aria-live="polite"></div>
           </section>
 
           <section class="list-tools" aria-label="List tools">
@@ -160,6 +165,14 @@
                 title="Fetch README snippets for current starred repositories and rebuild search."
               >
                 Enrich README
+              </button>
+              <button
+                id="enrichListsButton"
+                class="secondary"
+                type="button"
+                title="Import GitHub Star Lists and join them to the local mirror."
+              >
+                Enrich Lists
               </button>
             </div>
             <label>

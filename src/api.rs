@@ -60,6 +60,7 @@ fn api_router(service: StarSyncService) -> Router {
         .route("/search", get(search_repos))
         .route("/sync", post(sync_stars))
         .route("/enrich/readme", post(enrich_readme))
+        .route("/enrich/lists", post(enrich_lists))
         .route("/events", get(events))
         .route("/events/recent", get(recent_events))
         .route(
@@ -246,6 +247,24 @@ async fn enrich_readme(
         move |service| async move {
             let updated = service.enrich_readmes(query.limit).await?;
             Ok(format!("{updated} README updated"))
+        },
+    )
+    .await
+}
+
+async fn enrich_lists(
+    State(state): State<ApiState>,
+) -> Result<(StatusCode, Json<BackgroundJobAccepted>), ApiError> {
+    enqueue_background_job(
+        state,
+        "enrich_lists",
+        "GitHub Lists enrichment queued",
+        |service| async move {
+            let report = service.enrich_lists().await?;
+            Ok(format!(
+                "{} lists, {} matched repos, {} updated",
+                report.lists, report.matched_repos, report.updated_repos
+            ))
         },
     )
     .await

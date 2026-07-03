@@ -218,9 +218,39 @@ h2 {
 
 .filters {
   display: grid;
-  grid-template-columns: repeat(6, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 10px;
   margin-top: 12px;
+}
+
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.filter-pill {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  padding: 3px 7px 3px 9px;
+  font-size: 12px;
+}
+
+.filter-pill button {
+  min-height: 18px;
+  width: 18px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
 }
 
 .list-tools {
@@ -298,13 +328,20 @@ blockquote {
   gap: 6px;
 }
 
-.tags span {
+.tags button {
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--panel-soft);
   color: var(--muted);
+  min-height: 24px;
   padding: 3px 8px;
   font-size: 12px;
+}
+
+.tags button:hover {
+  border-color: var(--accent);
+  background: var(--panel);
+  color: var(--accent-strong);
 }
 
 blockquote {
@@ -356,7 +393,7 @@ blockquote {
 
 .task-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 12px;
 }

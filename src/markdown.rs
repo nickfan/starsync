@@ -320,6 +320,8 @@ struct RepoCatalogItem {
     current: bool,
     archived: bool,
     tags: Vec<String>,
+    lists: Vec<String>,
+    github_lists: Vec<String>,
     status: Option<String>,
     summary: Option<String>,
 }
@@ -344,6 +346,8 @@ impl From<&RepoView> for RepoCatalogItem {
             current: repo.current,
             archived: repo.archived,
             tags: repo.user.tags.clone(),
+            lists: repo.user.lists.clone(),
+            github_lists: repo.github_lists.clone(),
             status: repo.user.status.clone(),
             summary: repo.user.summary.clone(),
         }
@@ -439,12 +443,12 @@ fn write_markdown_with_front_matter<T: Serialize>(
 fn render_catalog_table(items: &[RepoCatalogItem]) -> String {
     let mut table = String::new();
     table.push_str(
-        "| Repo | Owner | Language | Stars | Forks | Tags | Status | Current | Summary |\n",
+        "| Repo | Owner | Language | Stars | Forks | Tags | Lists | Status | Current | Summary |\n",
     );
-    table.push_str("| --- | --- | --- | ---: | ---: | --- | --- | --- | --- |\n");
+    table.push_str("| --- | --- | --- | ---: | ---: | --- | --- | --- | --- | --- |\n");
     for item in items {
         table.push_str(&format!(
-            "| [{}]({}) | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| [{}]({}) | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             markdown_cell(&item.full_name),
             item.path,
             markdown_cell(&item.owner),
@@ -456,6 +460,7 @@ fn render_catalog_table(items: &[RepoCatalogItem]) -> String {
                 .map(|value| value.to_string())
                 .unwrap_or_default(),
             markdown_cell(&item.tags.join(", ")),
+            markdown_cell(&combined_lists(item).join(", ")),
             markdown_cell(item.status.as_deref().unwrap_or("")),
             if item.current && !item.archived {
                 "yes"
@@ -466,7 +471,7 @@ fn render_catalog_table(items: &[RepoCatalogItem]) -> String {
         ));
     }
     if items.is_empty() {
-        table.push_str("| _No repositories indexed yet._ |  |  |  |  |  |  |  |  |\n");
+        table.push_str("| _No repositories indexed yet._ |  |  |  |  |  |  |  |  |  |\n");
     }
     table
 }
@@ -554,6 +559,10 @@ fn compact_details(item: &RepoCatalogItem) -> String {
     if !item.tags.is_empty() {
         details.push(format!("tags: {}", item.tags.join(", ")));
     }
+    let lists = combined_lists(item);
+    if !lists.is_empty() {
+        details.push(format!("lists: {}", lists.join(", ")));
+    }
     if let Some(summary) = item.summary.as_deref().filter(|value| !value.is_empty()) {
         details.push(summary.to_string());
     }
@@ -562,6 +571,14 @@ fn compact_details(item: &RepoCatalogItem) -> String {
     } else {
         format!(" - {}", markdown_inline(&details.join(" | ")))
     }
+}
+
+fn combined_lists(item: &RepoCatalogItem) -> Vec<String> {
+    let mut lists = item.lists.clone();
+    lists.extend(item.github_lists.clone());
+    lists.sort();
+    lists.dedup();
+    lists
 }
 
 fn markdown_cell(value: &str) -> String {
@@ -598,6 +615,7 @@ mod tests {
             meta: RepoMeta {
                 user: UserMeta {
                     tags: vec!["rust".to_string()],
+                    lists: vec!["toolkit".to_string()],
                     summary: Some("A useful crate".to_string()),
                     ..UserMeta::default()
                 },
@@ -610,6 +628,7 @@ mod tests {
         let loaded = read_meta_document(&path).unwrap();
 
         assert_eq!(loaded.meta.user.tags, vec!["rust"]);
+        assert_eq!(loaded.meta.user.lists, vec!["toolkit"]);
         assert!(loaded.body.contains("Notes stay here."));
     }
 
@@ -642,9 +661,11 @@ mod tests {
             current: true,
             user: UserMeta {
                 tags: vec!["cli".to_string()],
+                lists: vec!["toolkit".to_string()],
                 summary: Some("Terminal utilities".to_string()),
                 ..UserMeta::default()
             },
+            github_lists: vec!["github-toolkit".to_string()],
             ..RepoView::default()
         };
 
@@ -660,10 +681,13 @@ mod tests {
         assert_eq!(catalog["counts"]["total"], 1);
         assert_eq!(catalog["items"][0]["full_name"], "alice/Toolbox");
         assert_eq!(catalog["items"][0]["tags"][0], "cli");
+        assert_eq!(catalog["items"][0]["lists"][0], "toolkit");
+        assert_eq!(catalog["items"][0]["github_lists"][0], "github-toolkit");
 
         let by_repo = fs::read_to_string(store.by_repo_index_path()).unwrap();
         assert!(by_repo.contains("## T"));
         assert!(by_repo.contains("[alice/Toolbox](alice/Toolbox/INDEX.md)"));
+        assert!(by_repo.contains("lists: github-toolkit, toolkit"));
 
         let by_owner = fs::read_to_string(store.by_owner_index_path()).unwrap();
         assert!(by_owner.contains("## A"));

@@ -119,6 +119,7 @@ async fn call_tool(service: &StarSyncService, params: Value) -> Result<Value> {
                 .map(|value| value as usize);
             json!({ "updated": service.enrich_readmes(limit).await? })
         }
+        "enrich_lists" => json!(service.enrich_lists().await?),
         "list_recent_events" => {
             let limit = arguments
                 .get("limit")
@@ -259,6 +260,10 @@ fn tools() -> Value {
         tool(
             "enrich_readme",
             "Refresh README text snippets for current starred repositories."
+        ),
+        tool(
+            "enrich_lists",
+            "Import GitHub Star Lists via official GraphQL and join them to the local starred mirror."
         ),
         tool(
             "list_recent_events",

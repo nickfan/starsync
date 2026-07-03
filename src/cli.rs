@@ -96,6 +96,7 @@ pub enum EnrichCommand {
         #[arg(long)]
         limit: Option<usize>,
     },
+    Lists,
 }
 
 #[derive(Args, Debug, Default)]
@@ -110,6 +111,12 @@ pub struct FilterArgs {
     pub topic: Option<String>,
     #[arg(long)]
     pub tag: Option<String>,
+    #[arg(long)]
+    pub list: Option<String>,
+    #[arg(long)]
+    pub user_list: Option<String>,
+    #[arg(long)]
+    pub github_list: Option<String>,
     #[arg(long)]
     pub status: Option<String>,
     #[arg(long)]
@@ -142,6 +149,8 @@ pub enum MetaCommand {
         repo: String,
         #[arg(long = "tag")]
         tags: Vec<String>,
+        #[arg(long = "list")]
+        lists: Vec<String>,
         #[arg(long)]
         status: Option<String>,
         #[arg(long)]
@@ -228,11 +237,16 @@ pub async fn run() -> Result<()> {
         Command::Sync => {
             print_json(&service.sync().await?)?;
         }
-        Command::Enrich {
-            command: EnrichCommand::Readme { limit },
-        } => {
-            print_json(&serde_json::json!({ "updated": service.enrich_readmes(limit).await? }))?;
-        }
+        Command::Enrich { command } => match command {
+            EnrichCommand::Readme { limit } => {
+                print_json(
+                    &serde_json::json!({ "updated": service.enrich_readmes(limit).await? }),
+                )?;
+            }
+            EnrichCommand::Lists => {
+                print_json(&service.enrich_lists().await?)?;
+            }
+        },
         Command::List(filters) => {
             print_json(&service.list_repos(filters.into_repo_filters(None)?)?)?;
         }
@@ -244,6 +258,7 @@ pub async fn run() -> Result<()> {
                 owner,
                 repo,
                 tags,
+                lists,
                 status,
                 summary,
                 notes,
@@ -251,6 +266,7 @@ pub async fn run() -> Result<()> {
             } => {
                 let patch = MetaPatch {
                     tags: (!tags.is_empty()).then_some(tags),
+                    lists: (!lists.is_empty()).then_some(lists),
                     status: status.map(Some),
                     summary: summary.map(Some),
                     notes: notes.map(Some),
@@ -353,6 +369,9 @@ impl FilterArgs {
             language: self.language,
             topic: self.topic,
             tag: self.tag,
+            list: self.list,
+            user_list: self.user_list,
+            github_list: self.github_list,
             status: self.status,
             archived: self.archived,
             limit: self.limit,
@@ -415,7 +434,7 @@ Use StarSync when the user asks to search, browse, summarize, tag, or maintain t
 
 ## Rules
 
-- Prefer MCP tools when available: `search_repos`, `list_repos`, `get_repo`, `update_repo_meta`, `sync_stars`, `enrich_readme`.
+- Prefer MCP tools when available: `search_repos`, `list_repos`, `get_repo`, `update_repo_meta`, `sync_stars`, `enrich_readme`, `enrich_lists`.
 - Use the CLI when MCP is unavailable: `starsync search`, `starsync list`, `starsync meta edit`, `starsync sync`.
 - Never star or unstar GitHub repositories. StarSync writes local Markdown meta only.
 - Treat Markdown/YAML files under the configured data directory as the source of truth for personal tags, notes, status, and links.

@@ -104,12 +104,16 @@ impl Default for SchemaMeta {
 pub struct RepoSource {
     pub github_id: Option<i64>,
     pub html_url: Option<String>,
+    #[serde(default)]
+    pub github_lists: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct UserMeta {
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub lists: Vec<String>,
     pub status: Option<String>,
     pub summary: Option<String>,
     pub notes: Option<String>,
@@ -142,6 +146,8 @@ pub struct RepoView {
     pub current: bool,
     pub archived: bool,
     pub user: UserMeta,
+    #[serde(default)]
+    pub github_lists: Vec<String>,
     pub readme_snippet: Option<String>,
 }
 
@@ -167,6 +173,8 @@ pub struct MirrorState {
     pub readmes: Vec<ReadmeCacheEntry>,
     pub last_sync_at: Option<DateTime<Utc>>,
     pub last_etag: Option<String>,
+    pub remote_digest: Option<String>,
+    pub derived_digest: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -176,6 +184,9 @@ pub struct RepoFilters {
     pub language: Option<String>,
     pub topic: Option<String>,
     pub tag: Option<String>,
+    pub list: Option<String>,
+    pub user_list: Option<String>,
+    pub github_list: Option<String>,
     pub status: Option<String>,
     pub archived: Option<bool>,
     pub sort: Option<RepoSort>,
@@ -226,6 +237,17 @@ pub struct SyncReport {
     pub removed: usize,
     pub updated: usize,
     pub total_current: usize,
+    #[serde(default)]
+    pub no_changes: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct GitHubListsEnrichmentReport {
+    pub lists: usize,
+    pub list_items: usize,
+    pub matched_repos: usize,
+    pub unmatched_items: usize,
+    pub updated_repos: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -274,6 +296,16 @@ pub enum StarSyncEvent {
     SyncCompleted {
         run_id: String,
         report: SyncReport,
+    },
+    SyncNoChanges {
+        total_current: usize,
+    },
+    ListsEnriched {
+        report: GitHubListsEnrichmentReport,
+    },
+    IndexRebuildStarted,
+    IndexRebuildCompleted {
+        repos: usize,
     },
     StorageChanged {
         action: String,
@@ -332,6 +364,7 @@ pub struct WebhookDeliveryState {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MetaPatch {
     pub tags: Option<Vec<String>>,
+    pub lists: Option<Vec<String>>,
     pub status: Option<Option<String>>,
     pub summary: Option<Option<String>>,
     pub notes: Option<Option<String>>,

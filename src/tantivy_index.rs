@@ -34,6 +34,8 @@ struct IndexFields {
     language: Field,
     topics: Field,
     tags: Field,
+    user_lists: Field,
+    github_lists: Field,
     status: Field,
     summary: Field,
     notes: Field,
@@ -144,6 +146,8 @@ fn build_query(
             fields.language,
             fields.topics,
             fields.tags,
+            fields.user_lists,
+            fields.github_lists,
             fields.status,
             fields.summary,
             fields.notes,
@@ -166,6 +170,8 @@ fn schema() -> (Schema, IndexFields) {
     let language = builder.add_text_field("language", text_options());
     let topics = builder.add_text_field("topics", text_options());
     let tags = builder.add_text_field("tags", text_options());
+    let user_lists = builder.add_text_field("user_lists", text_options());
+    let github_lists = builder.add_text_field("github_lists", text_options());
     let status = builder.add_text_field("status", text_options());
     let summary = builder.add_text_field("summary", text_options());
     let notes = builder.add_text_field("notes", text_options());
@@ -204,6 +210,8 @@ fn schema() -> (Schema, IndexFields) {
         language,
         topics,
         tags,
+        user_lists,
+        github_lists,
         status,
         summary,
         notes,
@@ -230,6 +238,8 @@ fn fields_from_schema(schema: Schema) -> Result<IndexFields> {
         language: field("language")?,
         topics: field("topics")?,
         tags: field("tags")?,
+        user_lists: field("user_lists")?,
+        github_lists: field("github_lists")?,
         status: field("status")?,
         summary: field("summary")?,
         notes: field("notes")?,
@@ -270,6 +280,8 @@ fn repo_document(repo: &RepoView, fields: &IndexFields) -> TantivyDocument {
         fields.language => repo.language.clone().unwrap_or_default(),
         fields.topics => repo.topics.join(" "),
         fields.tags => repo.user.tags.join(" "),
+        fields.user_lists => repo.user.lists.join(" "),
+        fields.github_lists => repo.github_lists.join(" "),
         fields.status => repo.user.status.clone().unwrap_or_default(),
         fields.summary => repo.user.summary.clone().unwrap_or_default(),
         fields.notes => repo.user.notes.clone().unwrap_or_default(),
@@ -288,6 +300,8 @@ fn searchable_text(repo: &RepoView) -> String {
         repo.language.as_deref().unwrap_or_default(),
         &repo.topics.join(" "),
         &repo.user.tags.join(" "),
+        &repo.user.lists.join(" "),
+        &repo.github_lists.join(" "),
         repo.user.status.as_deref().unwrap_or_default(),
         repo.user.summary.as_deref().unwrap_or_default(),
         repo.user.notes.as_deref().unwrap_or_default(),

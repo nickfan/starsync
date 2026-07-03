@@ -2,7 +2,7 @@
 
 StarSync 是一个 local-first 的 Rust 服务，用来把你的 GitHub starred repositories 变成可检索的个人知识库。
 
-它会镜像 GitHub starred repo 清单，把你的个人 meta 信息保存在 Markdown/YAML 中，同时提供 CLI、REST、OpenAPI、SSE 事件流和 stdio MCP Server，并用 Tantivy 派生本地检索索引，支持中文分词和拼音检索。
+它会镜像 GitHub starred repo 清单，把你的个人 meta 信息保存在 Markdown/YAML 中，也可以通过官方 GraphQL 导入 GitHub Star Lists，同时提供 CLI、REST、OpenAPI、SSE 事件流和 stdio MCP Server，并用 Tantivy 派生本地检索索引，支持中文分词和拼音检索。
 
 > StarSync v1 不会在 GitHub 上执行 star 或 unstar。GitHub 是远程 star 清单的事实源；本地 Markdown 是 tags、notes、status、links 等个人 meta 的事实源。
 
@@ -10,7 +10,7 @@ StarSync 是一个 local-first 的 Rust 服务，用来把你的 GitHub starred 
 
 - 同步 GitHub starred repositories 到本地 mirror。
 - 在 `~/.starsync/data/repos` 下用 Markdown front matter 保存个人 meta。
-- 检索 GitHub repo 信息、本地 tags/notes/status、可选 README 摘要。
+- 检索 GitHub repo 信息、本地 tags/lists/notes/status、导入的 GitHub Star Lists、可选 README 摘要。
 - 通过 CLI、REST API、OpenAPI 3.1、SSE events、stdio MCP Server 浏览和搜索。
 - 默认使用本地文件存储，也支持 Git-backed metadata storage，方便分享或备份。
 - 使用轻量 Moka 进程内读缓存，但 Markdown 和 mirror 文件仍然是事实源。
@@ -214,7 +214,7 @@ helm upgrade --install starsync deploy/helm/starsync \
 
 ## GitHub Token
 
-只有调用 GitHub API 时才需要 GitHub personal access token，例如 `sync` 和 README enrichment。
+只有调用 GitHub API 时才需要 GitHub personal access token，例如 `sync`、README enrichment 和可选的 GitHub Star Lists enrichment。
 
 v1 推荐权限：
 
@@ -362,6 +362,7 @@ starsync sync
 ```bash
 starsync list --limit 20
 starsync list --language Rust --tag ai --sort updated --direction desc
+starsync list --list toolkit --sort stars --direction desc
 ```
 
 搜索本地和远程字段：
@@ -371,6 +372,8 @@ starsync search retrieval
 starsync search "agent framework" --archived true
 starsync search 'owner:nickfan AND name:^T'
 starsync search '(language:Rust AND topic:cli) OR tag:agent'
+starsync search 'owner:nickfan AND list:toolkit'
+starsync search 'github_list:toolkit OR user_list:search'
 starsync search 'language:Rust -topic:web stars:>=1000'
 starsync search '中文搜索'
 starsync search 'notes:向量数据库'
@@ -380,7 +383,7 @@ starsync search 'notes:向量数据库'
 
 - 布尔操作：`AND`、`OR`、`NOT`、括号，以及相邻条件的隐式 `AND`。
 - 否定简写：`-topic:web` 等价于 `NOT topic:web`。
-- Qualifiers：`owner:`、`user:`、`org:`、`name:`、`repo:`、`language:`、`topic:`、`tag:`、`status:`、`archived:`、`current:`、`is:`、`stars:`、`forks:`、`description:`、`summary:`、`notes:`、`readme:`。
+- Qualifiers：`owner:`、`user:`、`org:`、`name:`、`repo:`、`language:`、`topic:`、`tag:`、`list:`、`user_list:`、`github_list:`、`status:`、`archived:`、`current:`、`is:`、`stars:`、`forks:`、`description:`、`summary:`、`notes:`、`readme:`。
 - 本地前缀匹配：`name:^T` 或 `name:T*`。
 - 等值写法：`owner:nickfan`、`owner=nickfan`、`owner:=nickfan`。
 - stars 和 forks 数值比较：`stars:>=1000`、`stars:<500`、`stars:100..500`、`forks:>=100`。
@@ -407,6 +410,9 @@ starsync list --owner nickfan --sort name --direction asc --limit 50
 # 翻页浏览本地 meta 和 GitHub topic 混合命中的结果
 starsync search 'topic:cli OR tag:agent' --sort updated --direction desc --page 2 --per-page 25
 
+# 组合 GitHub Star Lists 和本地 meta
+starsync search 'github_list:toolkit AND tag:rust' --sort stars --direction desc --limit 20
+
 # 中文/CJK 轻量模糊检索，覆盖 notes、summary、README 摘要和 metadata
 starsync search '中文搜索'
 starsync search 'summary:本地知识库'
@@ -418,6 +424,7 @@ starsync search 'summary:本地知识库'
 starsync meta edit owner repo \
   --tag rust \
   --tag ai \
+  --list toolkit \
   --status evaluating \
   --summary "Worth tracking for local agent tooling"
 ```
@@ -446,6 +453,16 @@ starsync index rebuild
 ```bash
 starsync enrich readme --limit 50
 ```
+
+导入 GitHub Star Lists，并和已经同步的 starred repositories 做本地交叉匹配：
+
+```bash
+starsync enrich lists
+```
+
+GitHub Lists 会写入 `source.github_lists`；你自己维护的稳定列表写在
+`user.lists`。检索 `list:toolkit` 会同时匹配两种来源；如果要区分来源，
+用 `user_list:toolkit` 或 `github_list:toolkit`。
 
 启动 REST 服务和内置 Web UI：
 
@@ -548,8 +565,9 @@ docker compose down
 ~/.starsync/state/event-subscriptions.json
 ```
 
-顶层清单文件是派生数据，会在 `sync`、`meta edit`、`meta delete`、
-`enrich readme`、`index rebuild` 后重建。这样即使没有 Tantivy 索引或 REST 服务，
+顶层清单文件是派生数据，会在远程状态变化的 `sync`、`meta edit`、`meta delete`、
+`enrich readme`、`enrich lists`、`index rebuild` 后重建。无变化 sync 只更新
+mirror 的同步元数据，会跳过 catalog 和 Tantivy rebuild。这样即使没有 Tantivy 索引或 REST 服务，
 也能直接用本地文件快速检索：
 
 ```bash
@@ -571,10 +589,14 @@ repo:
 source:
   github_id: 123
   html_url: https://github.com/owner/repo
+  github_lists:
+    - toolkit
 user:
   tags:
     - rust
     - ai
+  lists:
+    - search
   status: evaluating
   summary: Worth tracking
   notes: Local notes are searchable.
@@ -589,7 +611,7 @@ Long-form notes go here.
 Markdown/YAML 是个人 meta 的事实源。`~/.starsync/state/search/` 下的 Tantivy
 目录只是派生索引，可以随时重建。
 
-搜索会把 GitHub repo 信息、Markdown meta、README 摘要、topics、tags、status
+搜索会把 GitHub repo 信息、Markdown meta、README 摘要、topics、tags、lists、status
 融合写入 Tantivy。StarSync 注册 `tantivy-jieba` 做中文分词，同时写入派生的
 CJK n-gram、拼音词和拼音首字母字段。结构化 qualifier 和显式排序仍然基于融合后的
 repo 记录计算，所以 CLI、REST API、Web UI 和 MCP Server 返回的是同一份本地视图。
@@ -626,6 +648,7 @@ DELETE /repos/{owner}/{repo}/meta
 GET  /search
 POST /sync
 POST /enrich/readme
+POST /enrich/lists
 GET  /events
 GET  /events/recent
 GET  /event-subscriptions
@@ -636,8 +659,8 @@ GET  /openapi.yaml
 GET  /openapi.json
 ```
 
-`POST /sync` 和 `POST /enrich/readme` 会把任务放进后台队列，并返回带
-`job_id` 的 `202 Accepted`。可以通过 `GET /events`、`GET /events/recent`
+`POST /sync`、`POST /enrich/readme` 和 `POST /enrich/lists` 会把任务放进后台队列，
+并返回带 `job_id` 的 `202 Accepted`。可以通过 `GET /events`、`GET /events/recent`
 或 webhook 订阅监听 `task.started`、`task.completed`、`task.failed`。
 
 示例：
@@ -645,10 +668,13 @@ GET  /openapi.json
 ```bash
 curl 'http://127.0.0.1:8989/repos?limit=20&language=Rust&sort=updated&direction=desc'
 curl 'http://127.0.0.1:8989/search?q=retrieval&tag=ai'
+curl 'http://127.0.0.1:8989/repos?list=toolkit&sort=stars&direction=desc&limit=20'
+curl 'http://127.0.0.1:8989/search?q=github_list:toolkit%20AND%20tag:rust'
 curl 'http://127.0.0.1:8989/search?q=language:Rust%20-topic:web&sort=stars&direction=desc&limit=20'
 curl 'http://127.0.0.1:8989/repos?topic=cli&sort=forks&direction=desc&limit=20'
 curl 'http://127.0.0.1:8989/repos?owner=nickfan&sort=name&direction=asc&limit=50'
 curl -X POST 'http://127.0.0.1:8989/sync'
+curl -X POST 'http://127.0.0.1:8989/enrich/lists'
 curl 'http://127.0.0.1:8989/events/recent?limit=20'
 curl -X POST 'http://127.0.0.1:8989/event-subscriptions' \
   -H 'content-type: application/json' \
@@ -678,6 +704,7 @@ starsync mcp
 - `update_repo_meta`
 - `sync_stars`
 - `enrich_readme`
+- `enrich_lists`
 - `list_recent_events`
 - `list_event_subscriptions`
 - `create_event_subscription`

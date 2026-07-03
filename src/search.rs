@@ -128,6 +128,30 @@ fn matches_filter_fields(repo: &RepoView, filters: &RepoFilters) -> bool {
             return false;
         }
     }
+    if let Some(list) = &filters.list {
+        if !matches_any_list(repo, list) {
+            return false;
+        }
+    }
+    if let Some(list) = &filters.user_list {
+        if !repo
+            .user
+            .lists
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case(list))
+        {
+            return false;
+        }
+    }
+    if let Some(list) = &filters.github_list {
+        if !repo
+            .github_lists
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case(list))
+        {
+            return false;
+        }
+    }
     if let Some(status) = &filters.status {
         if repo
             .user
@@ -322,6 +346,12 @@ fn add_text_term_score(
     }
     for tag in &repo.user.tags {
         matched |= add_match(score, fields, "tag", tag, query, 3.0);
+    }
+    for list in &repo.user.lists {
+        matched |= add_match(score, fields, "user_list", list, query, 2.6);
+    }
+    for list in &repo.github_lists {
+        matched |= add_match(score, fields, "github_list", list, query, 2.4);
     }
     if let Some(status) = &repo.user.status {
         matched |= add_match(score, fields, "status", status, query, 1.0);
@@ -566,6 +596,16 @@ fn qualifier_matches(repo: &RepoView, field: &str, value: &str) -> bool {
             .tags
             .iter()
             .any(|tag| match_text(tag, value, TextDefault::Exact)),
+        "list" | "lists" => matches_any_list(repo, value),
+        "user_list" | "user_lists" => repo
+            .user
+            .lists
+            .iter()
+            .any(|list| match_text(list, value, TextDefault::Exact)),
+        "github_list" | "github_lists" => repo
+            .github_lists
+            .iter()
+            .any(|list| match_text(list, value, TextDefault::Exact)),
         "status" => repo
             .user
             .status
@@ -616,6 +656,14 @@ fn qualifier_matches(repo: &RepoView, field: &str, value: &str) -> bool {
             .unwrap_or(false),
         _ => false,
     }
+}
+
+fn matches_any_list(repo: &RepoView, value: &str) -> bool {
+    repo.user
+        .lists
+        .iter()
+        .chain(repo.github_lists.iter())
+        .any(|list| match_text(list, value, TextDefault::Exact))
 }
 
 #[derive(Clone, Copy)]
@@ -972,6 +1020,45 @@ mod tests {
     }
 
     #[test]
+    fn filters_by_user_or_github_lists() {
+        let mut user_listed = repo("user-listed", &[]);
+        user_listed.user.lists = vec!["toolkit".to_string()];
+        let mut github_listed = repo("github-listed", &[]);
+        github_listed.github_lists = vec!["toolkit".to_string()];
+        let mut other = repo("other", &[]);
+        other.user.lists = vec!["notes".to_string()];
+
+        let combined = list_repos(
+            vec![user_listed.clone(), github_listed.clone(), other.clone()],
+            &RepoFilters {
+                list: Some("toolkit".to_string()),
+                ..RepoFilters::default()
+            },
+        );
+        assert_eq!(combined.total, 2);
+
+        let local_only = list_repos(
+            vec![user_listed.clone(), github_listed.clone(), other.clone()],
+            &RepoFilters {
+                user_list: Some("toolkit".to_string()),
+                ..RepoFilters::default()
+            },
+        );
+        assert_eq!(local_only.total, 1);
+        assert_eq!(local_only.items[0].name, "user-listed");
+
+        let github_only = list_repos(
+            vec![user_listed, github_listed, other],
+            &RepoFilters {
+                github_list: Some("toolkit".to_string()),
+                ..RepoFilters::default()
+            },
+        );
+        assert_eq!(github_only.total, 1);
+        assert_eq!(github_only.items[0].name, "github-listed");
+    }
+
+    #[test]
     fn search_snippet_handles_multibyte_text() {
         let mut repo = repo("demo", &[]);
         repo.description = Some("可视化大屏，地理轮廓精确呈现3D地图，支持 Rust 插件".to_string());
@@ -1099,6 +1186,22 @@ mod tests {
 
         assert_eq!(results.total, 1);
         assert_eq!(results.items[0].full_name, "nickfan/Toolbox");
+    }
+
+    #[test]
+    fn query_expression_filters_by_lists() {
+        let mut cli = repo_for("alice", "tooling", &[]);
+        cli.user.lists = vec!["toolkit".to_string()];
+        let mut ai = repo_for("alice", "agent", &[]);
+        ai.github_lists = vec!["ai".to_string()];
+        let filters = RepoFilters {
+            q: Some("list:toolkit OR github_list:ai".to_string()),
+            ..RepoFilters::default()
+        };
+
+        let results = list_repos(vec![cli, ai, repo_for("alice", "other", &[])], &filters);
+
+        assert_eq!(results.total, 2);
     }
 
     #[test]

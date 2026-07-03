@@ -6,14 +6,17 @@ use crate::{
     markdown::{MarkdownStore, RepoMetaDocument},
     models::{
         EventEnvelope, EventSubscriptionCreate, EventSubscriptionPatch, EventSubscriptionView,
-        ListResponse, MetaPatch, MirrorState, ReadmeCacheEntry, RemoteRepo, RepoFilters,
-        RepoIdentity, RepoMeta, RepoView, SearchResult, SortDirection, StarSyncEvent, SyncReport,
+        GitHubListsEnrichmentReport, ListResponse, MetaPatch, MirrorState, ReadmeCacheEntry,
+        RemoteRepo, RepoFilters, RepoIdentity, RepoMeta, RepoView, SearchResult, SortDirection,
+        StarSyncEvent, SyncReport,
     },
     search,
     tantivy_index::TantivyIndex,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
@@ -156,6 +159,7 @@ impl StarSyncService {
     pub fn apply_remote_repos(&self, fetched: Vec<RemoteRepo>) -> Result<SyncReport> {
         self.init()?;
         let mut state = self.store.read_mirror()?;
+        let previous_derived_digest = state.derived_digest.clone();
         let old: BTreeMap<String, RemoteRepo> = state
             .repos
             .into_iter()
@@ -168,6 +172,10 @@ impl StarSyncService {
 
         for mut repo in fetched {
             repo.current = true;
+            let should_ensure_meta = old
+                .get(&repo.full_name)
+                .map(|previous| remote_source_changed(previous, &repo))
+                .unwrap_or(true);
             match old.get(&repo.full_name) {
                 None => {
                     report.added += 1;
@@ -189,7 +197,9 @@ impl StarSyncService {
                 }
                 Some(_) => {}
             }
-            self.ensure_remote_meta(&repo)?;
+            if should_ensure_meta {
+                self.ensure_remote_meta(&repo)?;
+            }
             merged.insert(repo.full_name.clone(), repo);
         }
 
@@ -209,6 +219,20 @@ impl StarSyncService {
         report.total_current = merged.values().filter(|repo| repo.current).count();
         state.repos = merged.into_values().collect();
         state.last_sync_at = Some(Utc::now());
+        state.remote_digest = Some(remote_digest(&state.repos)?);
+        let next_derived_digest = derived_digest(&state, &self.store.list_meta()?)?;
+        let derived_changed =
+            previous_derived_digest.as_deref() != Some(next_derived_digest.as_str());
+        let remote_changed = report.added > 0 || report.updated > 0 || report.removed > 0;
+        if !remote_changed && !derived_changed {
+            report.no_changes = true;
+            state.derived_digest = Some(next_derived_digest);
+            self.store.write_mirror(&state)?;
+            self.events.emit(StarSyncEvent::SyncNoChanges {
+                total_current: report.total_current,
+            });
+            return Ok(report);
+        }
         self.store.write_mirror(&state)?;
         self.cache.invalidate_all();
         self.rebuild_index()?;
@@ -244,10 +268,85 @@ impl StarSyncService {
         Ok(updated)
     }
 
+    pub async fn enrich_lists(&self) -> Result<GitHubListsEnrichmentReport> {
+        let token = self.config.github_token.clone().ok_or_else(|| {
+            anyhow!("STARSYNC_GITHUB_TOKEN or github.token is required for GitHub Lists enrichment")
+        })?;
+        let client = GitHubClient::new(token)?;
+        let lists = client.fetch_star_lists().await?;
+        let state = self.store.read_mirror()?;
+        let current_by_id: BTreeMap<i64, RemoteRepo> = state
+            .repos
+            .iter()
+            .filter(|repo| repo.current)
+            .cloned()
+            .map(|repo| (repo.github_id, repo))
+            .collect();
+        let current_by_name: BTreeMap<String, RemoteRepo> = state
+            .repos
+            .iter()
+            .filter(|repo| repo.current)
+            .cloned()
+            .map(|repo| (repo.full_name.to_ascii_lowercase(), repo))
+            .collect();
+
+        let mut memberships: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut report = GitHubListsEnrichmentReport {
+            lists: lists.len(),
+            ..GitHubListsEnrichmentReport::default()
+        };
+
+        for list in lists {
+            for repo in list.repositories {
+                report.list_items += 1;
+                let matched = repo
+                    .github_id
+                    .and_then(|github_id| current_by_id.get(&github_id))
+                    .or_else(|| current_by_name.get(&repo.full_name.to_ascii_lowercase()));
+                if let Some(remote) = matched {
+                    memberships
+                        .entry(remote.full_name.clone())
+                        .or_default()
+                        .insert(list.slug.clone());
+                } else {
+                    report.unmatched_items += 1;
+                }
+            }
+        }
+
+        report.matched_repos = memberships.len();
+        for repo in state.repos.iter().filter(|repo| repo.current) {
+            let identity = repo.identity();
+            let mut document = self.store.ensure_meta(&identity)?;
+            let next_lists = memberships
+                .remove(&repo.full_name)
+                .map(|lists| lists.into_iter().collect::<Vec<_>>())
+                .unwrap_or_default();
+            if document.meta.source.github_lists != next_lists {
+                document.meta.source.github_lists = next_lists;
+                self.store.write_meta(&document)?;
+                report.updated_repos += 1;
+            }
+        }
+
+        if report.updated_repos > 0 {
+            self.cache.invalidate_all();
+            self.rebuild_index()?;
+        }
+        self.events.emit(StarSyncEvent::ListsEnriched {
+            report: report.clone(),
+        });
+        Ok(report)
+    }
+
     pub fn rebuild_index(&self) -> Result<()> {
+        self.events.emit(StarSyncEvent::IndexRebuildStarted);
         let repos = self.merged_repos()?;
         self.store.write_catalog(&repos)?;
         self.search_index.rebuild(&repos)?;
+        self.refresh_derived_digest()?;
+        self.events
+            .emit(StarSyncEvent::IndexRebuildCompleted { repos: repos.len() });
         Ok(())
     }
 
@@ -314,6 +413,9 @@ fn apply_meta_patch(meta: &mut RepoMeta, patch: MetaPatch) {
     if let Some(tags) = patch.tags {
         meta.user.tags = tags;
     }
+    if let Some(lists) = patch.lists {
+        meta.user.lists = lists;
+    }
     if let Some(status) = patch.status {
         meta.user.status = status;
     }
@@ -349,6 +451,7 @@ fn view_from_remote(remote: RemoteRepo, meta: RepoMeta, readme: Option<&String>)
         current: remote.current,
         archived: meta.archived || !remote.current,
         user: meta.user,
+        github_lists: meta.source.github_lists,
         readme_snippet: readme.map(|text| truncate(text, 8_000)),
     }
 }
@@ -362,9 +465,69 @@ fn view_from_meta_only(meta: RepoMeta, body: String) -> RepoView {
         current: false,
         archived: true,
         user: meta.user,
+        github_lists: meta.source.github_lists,
         readme_snippet: (!body.trim().is_empty()).then_some(truncate(&body, 8_000)),
         ..RepoView::default()
     }
+}
+
+fn remote_source_changed(previous: &RemoteRepo, next: &RemoteRepo) -> bool {
+    !previous.current || previous.github_id != next.github_id || previous.html_url != next.html_url
+}
+
+impl StarSyncService {
+    fn refresh_derived_digest(&self) -> Result<()> {
+        let mut state = self.store.read_mirror()?;
+        state.remote_digest = Some(remote_digest(&state.repos)?);
+        state.derived_digest = Some(derived_digest(&state, &self.store.list_meta()?)?);
+        self.store.write_mirror(&state)
+    }
+}
+
+fn remote_digest(repos: &[RemoteRepo]) -> Result<String> {
+    let mut repos = repos.to_vec();
+    repos.sort_by(|a, b| a.full_name.cmp(&b.full_name));
+    digest_json(&repos)
+}
+
+fn readme_digest(readmes: &[ReadmeCacheEntry]) -> Result<String> {
+    let mut readmes = readmes.to_vec();
+    readmes.sort_by(|a, b| {
+        a.owner
+            .cmp(&b.owner)
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.fetched_at.cmp(&b.fetched_at))
+    });
+    digest_json(&readmes)
+}
+
+fn meta_digest(meta_docs: &[RepoMetaDocument]) -> Result<String> {
+    let mut docs = meta_docs.to_vec();
+    docs.sort_by_key(|document| document.meta.repo.full_name());
+    digest_json(&docs)
+}
+
+fn derived_digest(state: &MirrorState, meta_docs: &[RepoMetaDocument]) -> Result<String> {
+    #[derive(Serialize)]
+    struct DerivedDigest<'a> {
+        remote: String,
+        readmes: String,
+        meta: String,
+        schema: &'a str,
+    }
+
+    digest_json(&DerivedDigest {
+        remote: remote_digest(&state.repos)?,
+        readmes: readme_digest(&state.readmes)?,
+        meta: meta_digest(meta_docs)?,
+        schema: "starsync.derived.v1",
+    })
+}
+
+fn digest_json<T: Serialize>(value: &T) -> Result<String> {
+    let raw = serde_json::to_vec(value)?;
+    let digest = Sha256::digest(raw);
+    Ok(hex::encode(digest))
 }
 
 fn truncate(text: &str, max_chars: usize) -> String {
@@ -455,6 +618,7 @@ mod tests {
                 &RepoIdentity::new("alice", "demo"),
                 MetaPatch {
                     tags: Some(vec!["rust".to_string()]),
+                    lists: Some(vec!["toolkit".to_string()]),
                     ..MetaPatch::default()
                 },
             )
@@ -463,6 +627,7 @@ mod tests {
         let response = service
             .list_repos(RepoFilters {
                 tag: Some("rust".to_string()),
+                list: Some("toolkit".to_string()),
                 ..RepoFilters::default()
             })
             .unwrap();
@@ -472,6 +637,29 @@ mod tests {
             response.items[0].html_url.as_deref(),
             Some("https://github.com/alice/demo")
         );
+        assert_eq!(response.items[0].user.lists, vec!["toolkit"]);
+    }
+
+    #[test]
+    fn unchanged_sync_skips_derived_rebuild() {
+        let (_dir, service) = test_service();
+
+        let first = service.apply_remote_repos(vec![remote("demo")]).unwrap();
+        let second = service.apply_remote_repos(vec![remote("demo")]).unwrap();
+
+        assert!(!first.no_changes);
+        assert!(second.no_changes);
+        assert_eq!(second.added, 0);
+        assert_eq!(second.updated, 0);
+        assert_eq!(second.removed, 0);
+
+        let events = service.recent_events(50).unwrap();
+        let rebuilds = events
+            .iter()
+            .filter(|event| event.name == "index.rebuild.completed")
+            .count();
+        assert_eq!(rebuilds, 1);
+        assert!(events.iter().any(|event| event.name == "sync.no_changes"));
     }
 
     #[test]

@@ -68,6 +68,12 @@ pub fn openapi_json() -> Value {
                     "responses": {"202": {"description": "Background README enrichment task accepted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/BackgroundJobAccepted"}}}}, "409": {"description": "A README enrichment task is already running"}}
                 }
             },
+            "/enrich/lists": {
+                "post": {
+                    "operationId": "enrichLists",
+                    "responses": {"202": {"description": "Background GitHub Star Lists enrichment task accepted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/BackgroundJobAccepted"}}}}, "409": {"description": "A GitHub Lists enrichment task is already running"}}
+                }
+            },
             "/events": {
                 "get": {
                     "operationId": "streamEvents",
@@ -118,6 +124,7 @@ pub fn openapi_json() -> Value {
                     "type": "object",
                     "properties": {
                         "tags": {"type": "array", "items": {"type": "string"}},
+                        "lists": {"type": "array", "items": {"type": "string"}},
                         "status": {"anyOf": [{"type": "string"}, {"type": "null"}]},
                         "summary": {"anyOf": [{"type": "string"}, {"type": "null"}]},
                         "notes": {"anyOf": [{"type": "string"}, {"type": "null"}]},
@@ -129,7 +136,7 @@ pub fn openapi_json() -> Value {
                     "required": ["job_id", "kind", "accepted", "message"],
                     "properties": {
                         "job_id": {"type": "string"},
-                        "kind": {"type": "string", "enum": ["sync", "enrich_readme"]},
+                        "kind": {"type": "string", "enum": ["sync", "enrich_readme", "enrich_lists"]},
                         "accepted": {"type": "boolean"},
                         "message": {"type": "string"}
                     }
@@ -181,6 +188,9 @@ fn list_parameters() -> Value {
         {"name": "topic", "in": "query", "schema": {"type": "string"}},
         {"name": "owner", "in": "query", "schema": {"type": "string"}},
         {"name": "tag", "in": "query", "schema": {"type": "string"}},
+        {"name": "list", "in": "query", "description": "Matches either local user.lists or imported source.github_lists.", "schema": {"type": "string"}},
+        {"name": "user_list", "in": "query", "description": "Matches local user.lists only.", "schema": {"type": "string"}},
+        {"name": "github_list", "in": "query", "description": "Matches imported GitHub Star Lists only.", "schema": {"type": "string"}},
         {"name": "status", "in": "query", "schema": {"type": "string"}},
         {"name": "archived", "in": "query", "schema": {"type": "boolean"}},
         {"name": "q", "in": "query", "description": "Full-text query or GitHub-style structured expression, for example owner:nickfan AND name:^T", "schema": {"type": "string"}}

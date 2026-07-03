@@ -2,7 +2,7 @@
 
 StarSync is a local-first Rust service for turning your GitHub starred repositories into a searchable personal knowledge base.
 
-It mirrors your GitHub starred repository list, keeps your personal metadata in Markdown/YAML, exposes CLI + REST + MCP interfaces, and builds a Tantivy-derived local search index with Chinese tokenization and pinyin support.
+It mirrors your GitHub starred repository list, keeps your personal metadata in Markdown/YAML, optionally imports GitHub Star Lists through official GraphQL, exposes CLI + REST + MCP interfaces, and builds a Tantivy-derived local search index with Chinese tokenization and pinyin support.
 
 > StarSync v1 never stars or unstars repositories on GitHub. GitHub is the remote source for the star list; local Markdown is the source of truth for your tags, notes, status, and links.
 
@@ -10,7 +10,7 @@ It mirrors your GitHub starred repository list, keeps your personal metadata in 
 
 - Sync GitHub starred repositories into a local mirror.
 - Store personal metadata in Markdown front matter under `~/.starsync/data/repos`.
-- Search merged GitHub repo facts, local tags/notes/status, and optional README snippets.
+- Search merged GitHub repo facts, local tags/lists/notes/status, imported GitHub Star Lists, and optional README snippets.
 - Browse and search through CLI, REST API, OpenAPI 3.1, SSE events, and a stdio MCP server.
 - Use local filesystem storage by default, with Git-backed metadata storage available for sharing or backup.
 - Use a small Moka in-process read cache while keeping Markdown and mirror files as the source of truth.
@@ -216,7 +216,7 @@ Or use the built binary:
 
 ## GitHub token
 
-StarSync needs a GitHub personal access token only for GitHub API calls such as `sync` and README enrichment.
+StarSync needs a GitHub personal access token only for GitHub API calls such as `sync`, README enrichment, and optional GitHub Star Lists enrichment.
 
 Recommended for v1:
 
@@ -364,6 +364,7 @@ List merged repo + meta records:
 ```bash
 starsync list --limit 20
 starsync list --language Rust --tag ai --sort updated --direction desc
+starsync list --list toolkit --sort stars --direction desc
 ```
 
 Search local and remote fields:
@@ -373,6 +374,8 @@ starsync search retrieval
 starsync search "agent framework" --archived true
 starsync search 'owner:nickfan AND name:^T'
 starsync search '(language:Rust AND topic:cli) OR tag:agent'
+starsync search 'owner:nickfan AND list:toolkit'
+starsync search 'github_list:toolkit OR user_list:search'
 starsync search 'language:Rust -topic:web stars:>=1000'
 starsync search '中文搜索'
 starsync search 'notes:向量数据库'
@@ -382,7 +385,7 @@ Search query syntax follows GitHub-style qualifiers where possible:
 
 - Boolean operators: `AND`, `OR`, `NOT`, parentheses, and implicit `AND` between adjacent terms.
 - Negation shorthand: `-topic:web` is the same as `NOT topic:web`.
-- Qualifiers: `owner:`, `user:`, `org:`, `name:`, `repo:`, `language:`, `topic:`, `tag:`, `status:`, `archived:`, `current:`, `is:`, `stars:`, `forks:`, `description:`, `summary:`, `notes:`, `readme:`.
+- Qualifiers: `owner:`, `user:`, `org:`, `name:`, `repo:`, `language:`, `topic:`, `tag:`, `list:`, `user_list:`, `github_list:`, `status:`, `archived:`, `current:`, `is:`, `stars:`, `forks:`, `description:`, `summary:`, `notes:`, `readme:`.
 - Local prefix matching: `name:^T` or `name:T*`.
 - Equality forms: `owner:nickfan`, `owner=nickfan`, and `owner:=nickfan`.
 - Numeric comparisons for stars and forks: `stars:>=1000`, `stars:<500`, `stars:100..500`, `forks:>=100`.
@@ -409,6 +412,9 @@ starsync list --owner nickfan --sort name --direction asc --limit 50
 # Page through local meta and GitHub topic matches
 starsync search 'topic:cli OR tag:agent' --sort updated --direction desc --page 2 --per-page 25
 
+# Combine imported GitHub Star Lists with local metadata
+starsync search 'github_list:toolkit AND tag:rust' --sort stars --direction desc --limit 20
+
 # Chinese/CJK fuzzy local search through notes, summaries, README snippets, and metadata
 starsync search '中文搜索'
 starsync search 'summary:本地知识库'
@@ -420,6 +426,7 @@ Edit local metadata only:
 starsync meta edit owner repo \
   --tag rust \
   --tag ai \
+  --list toolkit \
   --status evaluating \
   --summary "Worth tracking for local agent tooling"
 ```
@@ -448,6 +455,16 @@ Fetch README snippets for current starred repositories:
 ```bash
 starsync enrich readme --limit 50
 ```
+
+Import GitHub Star Lists and join them to already-synced starred repositories:
+
+```bash
+starsync enrich lists
+```
+
+GitHub Lists are written to `source.github_lists`; your own stable lists live in
+`user.lists`. Search `list:toolkit` to match either namespace, or use
+`user_list:toolkit` / `github_list:toolkit` when provenance matters.
 
 Start the REST service and built-in Web UI:
 
@@ -551,8 +568,10 @@ Default paths:
 ~/.starsync/state/event-subscriptions.json
 ```
 
-Top-level catalog files are derived data and are rebuilt by `sync`, `meta edit`,
-`meta delete`, `enrich readme`, and `index rebuild`. They make quick local
+Top-level catalog files are derived data and are rebuilt by `sync` when remote
+state changes, `meta edit`, `meta delete`, `enrich readme`, `enrich lists`, and
+`index rebuild`. No-change syncs update mirror sync metadata but skip catalog
+and Tantivy rebuilds. The catalogs make quick local
 lookup possible without the Tantivy index or a running REST service:
 
 ```bash
@@ -574,10 +593,14 @@ repo:
 source:
   github_id: 123
   html_url: https://github.com/owner/repo
+  github_lists:
+    - toolkit
 user:
   tags:
     - rust
     - ai
+  lists:
+    - search
   status: evaluating
   summary: Worth tracking
   notes: Local notes are searchable.
@@ -593,7 +616,7 @@ Markdown/YAML is the personal metadata source of truth. The Tantivy directory
 under `~/.starsync/state/search/` is a derived index and can be rebuilt.
 
 Search indexes fused GitHub repo facts, Markdown meta, README snippets, topics,
-tags, and status into Tantivy. StarSync registers `tantivy-jieba` for Chinese
+tags, lists, and status into Tantivy. StarSync registers `tantivy-jieba` for Chinese
 tokenization and also writes derived CJK n-grams, pinyin words, and pinyin
 initials into the index. Structured qualifiers and explicit sorting are still
 evaluated against the fused repo records so the CLI, REST API, Web UI, and MCP
@@ -631,6 +654,7 @@ DELETE /repos/{owner}/{repo}/meta
 GET  /search
 POST /sync
 POST /enrich/readme
+POST /enrich/lists
 GET  /events
 GET  /events/recent
 GET  /event-subscriptions
@@ -641,8 +665,9 @@ GET  /openapi.yaml
 GET  /openapi.json
 ```
 
-`POST /sync` and `POST /enrich/readme` enqueue background tasks and return
-`202 Accepted` with a `job_id`. Watch `GET /events`, `GET /events/recent`, or
+`POST /sync`, `POST /enrich/readme`, and `POST /enrich/lists` enqueue
+background tasks and return `202 Accepted` with a `job_id`.
+Watch `GET /events`, `GET /events/recent`, or
 webhook subscriptions for `task.started`, `task.completed`, and `task.failed`.
 
 Example:
@@ -650,10 +675,13 @@ Example:
 ```bash
 curl 'http://127.0.0.1:8989/repos?limit=20&language=Rust&sort=updated&direction=desc'
 curl 'http://127.0.0.1:8989/search?q=retrieval&tag=ai'
+curl 'http://127.0.0.1:8989/repos?list=toolkit&sort=stars&direction=desc&limit=20'
+curl 'http://127.0.0.1:8989/search?q=github_list:toolkit%20AND%20tag:rust'
 curl 'http://127.0.0.1:8989/search?q=language:Rust%20-topic:web&sort=stars&direction=desc&limit=20'
 curl 'http://127.0.0.1:8989/repos?topic=cli&sort=forks&direction=desc&limit=20'
 curl 'http://127.0.0.1:8989/repos?owner=nickfan&sort=name&direction=asc&limit=50'
 curl -X POST 'http://127.0.0.1:8989/sync'
+curl -X POST 'http://127.0.0.1:8989/enrich/lists'
 curl 'http://127.0.0.1:8989/events/recent?limit=20'
 curl -X POST 'http://127.0.0.1:8989/event-subscriptions' \
   -H 'content-type: application/json' \
@@ -683,6 +711,7 @@ Available MCP tools include:
 - `update_repo_meta`
 - `sync_stars`
 - `enrich_readme`
+- `enrich_lists`
 - `list_recent_events`
 - `list_event_subscriptions`
 - `create_event_subscription`
