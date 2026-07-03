@@ -312,6 +312,7 @@ struct RepoCatalogItem {
     language: Option<String>,
     topics: Vec<String>,
     stargazers_count: Option<u64>,
+    forks_count: Option<u64>,
     default_branch: Option<String>,
     pushed_at: Option<DateTime<Utc>>,
     updated_at: Option<DateTime<Utc>>,
@@ -335,6 +336,7 @@ impl From<&RepoView> for RepoCatalogItem {
             language: repo.language.clone(),
             topics: repo.topics.clone(),
             stargazers_count: repo.stargazers_count,
+            forks_count: repo.forks_count,
             default_branch: repo.default_branch.clone(),
             pushed_at: repo.pushed_at,
             updated_at: repo.updated_at,
@@ -436,16 +438,21 @@ fn write_markdown_with_front_matter<T: Serialize>(
 
 fn render_catalog_table(items: &[RepoCatalogItem]) -> String {
     let mut table = String::new();
-    table.push_str("| Repo | Owner | Language | Stars | Tags | Status | Current | Summary |\n");
-    table.push_str("| --- | --- | --- | ---: | --- | --- | --- | --- |\n");
+    table.push_str(
+        "| Repo | Owner | Language | Stars | Forks | Tags | Status | Current | Summary |\n",
+    );
+    table.push_str("| --- | --- | --- | ---: | ---: | --- | --- | --- | --- |\n");
     for item in items {
         table.push_str(&format!(
-            "| [{}]({}) | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| [{}]({}) | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             markdown_cell(&item.full_name),
             item.path,
             markdown_cell(&item.owner),
             markdown_cell(item.language.as_deref().unwrap_or("")),
             item.stargazers_count
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            item.forks_count
                 .map(|value| value.to_string())
                 .unwrap_or_default(),
             markdown_cell(&item.tags.join(", ")),
@@ -459,7 +466,7 @@ fn render_catalog_table(items: &[RepoCatalogItem]) -> String {
         ));
     }
     if items.is_empty() {
-        table.push_str("| _No repositories indexed yet._ |  |  |  |  |  |  |  |\n");
+        table.push_str("| _No repositories indexed yet._ |  |  |  |  |  |  |  |  |\n");
     }
     table
 }

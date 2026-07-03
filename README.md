@@ -29,6 +29,22 @@ starsync --help
 
 StarSync is published through the shared `nickfan/homebrew-tap` repository, which maps to `nickfan/tap/starsync` in Homebrew output.
 
+Run it as a Homebrew/Linuxbrew background service:
+
+```bash
+mkdir -p "$HOME/.config/starsync"
+printf 'STARSYNC_GITHUB_TOKEN=github_pat_xxx\n' > "$HOME/.config/starsync/.env"
+brew services start starsync
+open http://127.0.0.1:8989/ui/
+```
+
+Stop or restart the service:
+
+```bash
+brew services stop starsync
+brew services restart starsync
+```
+
 If you installed from the old single-project tap, switch to the shared tap:
 
 ```bash
@@ -94,6 +110,32 @@ Your `.env` file can stay minimal for Docker:
 
 ```dotenv
 STARSYNC_GITHUB_TOKEN=github_pat_xxx
+```
+
+Or use the checked-in Compose file:
+
+```bash
+cp .env.example .env
+# Edit .env and set STARSYNC_GITHUB_TOKEN.
+docker compose up -d
+open http://127.0.0.1:8989/ui/
+```
+
+The Compose service mounts these host paths by default:
+
+```text
+$HOME/.starsync/data  -> /data
+$HOME/.starsync/state -> /state
+$HOME/.starsync/ui    -> /ui
+```
+
+Override them when needed:
+
+```bash
+STARSYNC_HOST_DATA_DIR=/srv/starsync/data \
+STARSYNC_HOST_STATE_DIR=/srv/starsync/state \
+STARSYNC_HOST_UI_DIR=/srv/starsync/ui \
+docker compose up -d
 ```
 
 Build the image locally without installing Rust on the host:
@@ -303,6 +345,8 @@ Never commit tokens into the metadata Git repository.
 
 ## Quick start
 
+### Manual CLI and Web UI
+
 Initialize local folders:
 
 ```bash
@@ -338,20 +382,23 @@ Search query syntax follows GitHub-style qualifiers where possible:
 
 - Boolean operators: `AND`, `OR`, `NOT`, parentheses, and implicit `AND` between adjacent terms.
 - Negation shorthand: `-topic:web` is the same as `NOT topic:web`.
-- Qualifiers: `owner:`, `user:`, `org:`, `name:`, `repo:`, `language:`, `topic:`, `tag:`, `status:`, `archived:`, `current:`, `is:`, `stars:`, `description:`, `summary:`, `notes:`, `readme:`.
+- Qualifiers: `owner:`, `user:`, `org:`, `name:`, `repo:`, `language:`, `topic:`, `tag:`, `status:`, `archived:`, `current:`, `is:`, `stars:`, `forks:`, `description:`, `summary:`, `notes:`, `readme:`.
 - Local prefix matching: `name:^T` or `name:T*`.
 - Equality forms: `owner:nickfan`, `owner=nickfan`, and `owner:=nickfan`.
-- Numeric comparisons for stars: `stars:>=1000`, `stars:<500`, `stars:100..500`.
+- Numeric comparisons for stars and forks: `stars:>=1000`, `stars:<500`, `stars:100..500`, `forks:>=100`.
 
 GitHub's own starred list endpoint has only basic pagination/sort filters, so StarSync evaluates these richer expressions locally against the synced mirror plus Markdown meta.
 
-Sorting is separate from the query expression: filters decide which repos match, and `--sort` / `--direction` decide result order. Supported sort fields are `created` (GitHub starred time), `updated` (repository updated time), `name` (full repo name), and `stars` (stargazer count).
+Sorting is separate from the query expression: filters decide which repos match, and `--sort` / `--direction` decide result order. Supported sort fields are `created` (the time you starred the repo), `updated` (repository updated time), `name` (full repo name), `stars` (GitHub stargazer count), and `forks` (GitHub fork count). In the Web UI these are exposed as simple presets such as `Recently starred`, `Recent updated`, `Most stars`, and `Most forked`.
 
 Typical search/list cases:
 
 ```bash
 # Most-starred Rust repos that are not web-topic repos
 starsync search 'language:Rust -topic:web' --sort stars --direction desc --limit 20
+
+# Most-forked CLI/topic repos, no keyword required
+starsync list --topic cli --sort forks --direction desc --limit 20
 
 # Recently starred repos whose name starts with T
 starsync search 'name:^T' --sort created --direction desc --limit 20
@@ -434,6 +481,55 @@ starsync serve --no-ui
 starsync serve --no-ui-extract
 starsync serve --no-ui-overwrite
 starsync serve --no-ui-backup
+```
+
+### Homebrew / Linuxbrew Service
+
+After `brew install nickfan/tap/starsync`, put long-running service settings in
+`~/.config/starsync/.env`:
+
+```bash
+mkdir -p "$HOME/.config/starsync"
+printf 'STARSYNC_GITHUB_TOKEN=github_pat_xxx\n' > "$HOME/.config/starsync/.env"
+brew services start starsync
+```
+
+The service runs `starsync serve` and keeps using the same default data paths:
+`~/.starsync/data`, `~/.starsync/state`, and `~/.starsync/ui`.
+
+### systemd --user Service
+
+Linux users who do not want Homebrew services can install the user unit:
+
+```bash
+mkdir -p "$HOME/.config/systemd/user" "$HOME/.config/starsync"
+cp deploy/systemd/starsync.service "$HOME/.config/systemd/user/starsync.service"
+printf 'STARSYNC_GITHUB_TOKEN=github_pat_xxx\n' > "$HOME/.config/starsync/.env"
+systemctl --user daemon-reload
+systemctl --user enable --now starsync.service
+```
+
+Check logs and status:
+
+```bash
+systemctl --user status starsync.service
+journalctl --user -u starsync.service -f
+```
+
+### Docker Compose
+
+```bash
+cp .env.example .env
+# Edit .env and set STARSYNC_GITHUB_TOKEN.
+docker compose up -d
+open http://127.0.0.1:8989/ui/
+```
+
+Compose uses the published image and mounts local data/state/UI paths under
+`$HOME/.starsync` by default. Stop it with:
+
+```bash
+docker compose down
 ```
 
 ## Data layout
@@ -545,13 +641,19 @@ GET  /openapi.yaml
 GET  /openapi.json
 ```
 
+`POST /sync` and `POST /enrich/readme` enqueue background tasks and return
+`202 Accepted` with a `job_id`. Watch `GET /events`, `GET /events/recent`, or
+webhook subscriptions for `task.started`, `task.completed`, and `task.failed`.
+
 Example:
 
 ```bash
 curl 'http://127.0.0.1:8989/repos?limit=20&language=Rust&sort=updated&direction=desc'
 curl 'http://127.0.0.1:8989/search?q=retrieval&tag=ai'
 curl 'http://127.0.0.1:8989/search?q=language:Rust%20-topic:web&sort=stars&direction=desc&limit=20'
+curl 'http://127.0.0.1:8989/repos?topic=cli&sort=forks&direction=desc&limit=20'
 curl 'http://127.0.0.1:8989/repos?owner=nickfan&sort=name&direction=asc&limit=50'
+curl -X POST 'http://127.0.0.1:8989/sync'
 curl 'http://127.0.0.1:8989/events/recent?limit=20'
 curl -X POST 'http://127.0.0.1:8989/event-subscriptions' \
   -H 'content-type: application/json' \
@@ -672,7 +774,7 @@ Repository secret:   HOMEBREW_TAP_TOKEN=<PAT with contents write access to the t
 
 After these values are configured, the tap is maintained by `.github/workflows/release.yml`; do not edit `Formula/starsync.rb` by hand for normal releases.
 
-The generated formula builds from the release vendored source tarball with `cargo install --locked --offline`, which keeps Homebrew/Linuxbrew builds reproducible and independent from the live crates.io index.
+The generated formula builds from the release vendored source tarball with `cargo install --locked --offline`, which keeps Homebrew/Linuxbrew builds reproducible and independent from the live crates.io index. It also declares a `service do` block, so `brew services start starsync` runs `starsync serve` as a background service.
 
 Useful references:
 

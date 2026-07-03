@@ -58,14 +58,14 @@ pub fn openapi_json() -> Value {
             "/sync": {
                 "post": {
                     "operationId": "syncStars",
-                    "responses": {"200": {"description": "GitHub starred repositories synchronized"}, "400": {"description": "Missing GitHub token or sync error"}}
+                    "responses": {"202": {"description": "Background sync task accepted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/BackgroundJobAccepted"}}}}, "409": {"description": "A sync task is already running"}}
                 }
             },
             "/enrich/readme": {
                 "post": {
                     "operationId": "enrichReadme",
                     "parameters": [{"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1}}],
-                    "responses": {"200": {"description": "README cache refreshed"}}
+                    "responses": {"202": {"description": "Background README enrichment task accepted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/BackgroundJobAccepted"}}}}, "409": {"description": "A README enrichment task is already running"}}
                 }
             },
             "/events": {
@@ -124,6 +124,16 @@ pub fn openapi_json() -> Value {
                         "archived": {"type": "boolean"}
                     }
                 },
+                "BackgroundJobAccepted": {
+                    "type": "object",
+                    "required": ["job_id", "kind", "accepted", "message"],
+                    "properties": {
+                        "job_id": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["sync", "enrich_readme"]},
+                        "accepted": {"type": "boolean"},
+                        "message": {"type": "string"}
+                    }
+                },
                 "EventSubscriptionCreate": {
                     "type": "object",
                     "required": ["url"],
@@ -165,7 +175,7 @@ fn list_parameters() -> Value {
         {"name": "cursor", "in": "query", "schema": {"type": "string"}},
         {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1}},
         {"name": "per_page", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 200}},
-        {"name": "sort", "in": "query", "description": "Sort field. created means GitHub starred time; updated means repository updated time.", "schema": {"type": "string", "enum": ["created", "updated", "name", "stars"]}},
+        {"name": "sort", "in": "query", "description": "Sort field. created means the time you starred the repo; stars means GitHub stargazer count; forks means GitHub fork count.", "schema": {"type": "string", "enum": ["created", "updated", "name", "stars", "forks"]}},
         {"name": "direction", "in": "query", "description": "Sort direction.", "schema": {"type": "string", "enum": ["asc", "desc"]}},
         {"name": "language", "in": "query", "schema": {"type": "string"}},
         {"name": "topic", "in": "query", "schema": {"type": "string"}},

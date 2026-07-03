@@ -23,6 +23,15 @@ class Starsync < Formula
     system "cargo", "install", "--locked", "--offline", "--path", ".", "--root", prefix
   end
 
+  service do
+    run [opt_bin/"starsync", "serve"]
+    keep_alive true
+    working_dir HOMEBREW_PREFIX
+    log_path var/"log/starsync.log"
+    error_log_path var/"log/starsync.err.log"
+    environment_variables PATH: std_service_path_env
+  end
+
   test do
     assert_match version.to_s, shell_output("#{bin}/starsync --version")
     assert_match "Local-first", shell_output("#{bin}/starsync --help")

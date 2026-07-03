@@ -238,6 +238,9 @@ impl Default for EventBus {
 
 pub fn event_name(event: &StarSyncEvent) -> &'static str {
     match event {
+        StarSyncEvent::TaskStarted { .. } => "task.started",
+        StarSyncEvent::TaskCompleted { .. } => "task.completed",
+        StarSyncEvent::TaskFailed { .. } => "task.failed",
         StarSyncEvent::SyncStarted { .. } => "sync.started",
         StarSyncEvent::RemoteAdded { .. } => "repo.added",
         StarSyncEvent::RemoteRemoved { .. } => "repo.removed",

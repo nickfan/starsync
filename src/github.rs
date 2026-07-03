@@ -155,7 +155,7 @@ impl GitHubClient {
 fn github_sort(sort: RepoSort) -> &'static str {
     match sort {
         RepoSort::Created => "created",
-        RepoSort::Updated | RepoSort::Name | RepoSort::Stars => "updated",
+        RepoSort::Updated | RepoSort::Name | RepoSort::Stars | RepoSort::Forks => "updated",
     }
 }
 
@@ -201,6 +201,7 @@ impl From<StarredRepoItem> for RemoteRepo {
             language: value.repo.language,
             topics: value.repo.topics,
             stargazers_count: value.repo.stargazers_count,
+            forks_count: value.repo.forks_count,
             default_branch: value.repo.default_branch,
             pushed_at: value.repo.pushed_at,
             updated_at: value.repo.updated_at,
@@ -223,6 +224,8 @@ struct GitHubRepo {
     topics: Vec<String>,
     #[serde(default)]
     stargazers_count: u64,
+    #[serde(default)]
+    forks_count: u64,
     default_branch: Option<String>,
     pushed_at: Option<DateTime<Utc>>,
     updated_at: Option<DateTime<Utc>>,

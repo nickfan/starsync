@@ -1,7 +1,7 @@
 use crate::{
     models::{
-        EventSubscriptionCreate, EventSubscriptionPatch, HealthResponse, MetaPatch, RepoFilters,
-        RepoIdentity,
+        BackgroundJobAccepted, EventSubscriptionCreate, EventSubscriptionPatch, HealthResponse,
+        MetaPatch, RepoFilters, RepoIdentity, StarSyncEvent,
     },
     openapi,
     service::StarSyncService,
@@ -19,11 +19,14 @@ use axum::{
 use futures_util::StreamExt;
 use serde::Deserialize;
 use std::{
+    collections::BTreeSet,
     convert::Infallible,
+    future::Future,
     net::{IpAddr, SocketAddr},
     path::PathBuf,
     sync::Arc,
 };
+use tokio::sync::Mutex;
 use tokio_stream::wrappers::BroadcastStream;
 use tower_http::{
     cors::CorsLayer,
@@ -34,6 +37,7 @@ use tower_http::{
 #[derive(Clone)]
 pub struct ApiState {
     service: Arc<StarSyncService>,
+    jobs: Arc<Mutex<BTreeSet<String>>>,
 }
 
 pub fn router(service: StarSyncService) -> Router {
@@ -43,6 +47,7 @@ pub fn router(service: StarSyncService) -> Router {
 fn api_router(service: StarSyncService) -> Router {
     let state = ApiState {
         service: Arc::new(service),
+        jobs: Arc::new(Mutex::new(BTreeSet::new())),
     };
     Router::new()
         .route("/health", get(health))
@@ -209,8 +214,20 @@ async fn delete_meta(
 
 async fn sync_stars(
     State(state): State<ApiState>,
-) -> Result<Json<crate::models::SyncReport>, ApiError> {
-    Ok(Json(state.service.sync().await?))
+) -> Result<(StatusCode, Json<BackgroundJobAccepted>), ApiError> {
+    enqueue_background_job(
+        state,
+        "sync",
+        "GitHub starred sync queued",
+        |service| async move {
+            let report = service.sync().await?;
+            Ok(format!(
+                "+{} -{} {} updated, {} current",
+                report.added, report.removed, report.updated, report.total_current
+            ))
+        },
+    )
+    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,9 +238,77 @@ struct EnrichQuery {
 async fn enrich_readme(
     State(state): State<ApiState>,
     Query(query): Query<EnrichQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let updated = state.service.enrich_readmes(query.limit).await?;
-    Ok(Json(serde_json::json!({ "updated": updated })))
+) -> Result<(StatusCode, Json<BackgroundJobAccepted>), ApiError> {
+    enqueue_background_job(
+        state,
+        "enrich_readme",
+        "README enrichment queued",
+        move |service| async move {
+            let updated = service.enrich_readmes(query.limit).await?;
+            Ok(format!("{updated} README updated"))
+        },
+    )
+    .await
+}
+
+async fn enqueue_background_job<F, Fut>(
+    state: ApiState,
+    kind: &'static str,
+    message: &'static str,
+    run: F,
+) -> Result<(StatusCode, Json<BackgroundJobAccepted>), ApiError>
+where
+    F: FnOnce(StarSyncService) -> Fut + Send + 'static,
+    Fut: Future<Output = anyhow::Result<String>> + Send + 'static,
+{
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let kind_string = kind.to_string();
+    {
+        let mut jobs = state.jobs.lock().await;
+        if !jobs.insert(kind_string.clone()) {
+            return Err(ApiError::conflict(format!("{kind} is already running")));
+        }
+    }
+
+    let jobs = state.jobs.clone();
+    let service = state.service.as_ref().clone();
+    let events = service.events();
+    events.emit(StarSyncEvent::TaskStarted {
+        job_id: job_id.clone(),
+        kind: kind_string.clone(),
+    });
+    let spawned_job_id = job_id.clone();
+    let spawned_kind = kind_string.clone();
+    tokio::spawn(async move {
+        let result = run(service).await;
+        jobs.lock().await.remove(&spawned_kind);
+        match result {
+            Ok(summary) => events.emit(StarSyncEvent::TaskCompleted {
+                job_id: spawned_job_id,
+                kind: spawned_kind,
+                summary,
+            }),
+            Err(error) => {
+                let message = error.to_string();
+                events.emit(StarSyncEvent::TaskFailed {
+                    job_id: spawned_job_id,
+                    kind: spawned_kind,
+                    message: message.clone(),
+                });
+                events.emit(StarSyncEvent::Error { message });
+            }
+        }
+    });
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(BackgroundJobAccepted {
+            job_id,
+            kind: kind_string,
+            accepted: true,
+            message: message.to_string(),
+        }),
+    ))
 }
 
 async fn events(
@@ -322,6 +407,13 @@ impl ApiError {
     fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
+    }
+
+    fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
             message: message.into(),
         }
     }

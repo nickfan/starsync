@@ -1,0 +1,19 @@
+services:
+  starsync:
+    image: ghcr.io/nickfan/starsync:latest
+    container_name: starsync
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      STARSYNC_BIND: 0.0.0.0:8989
+      STARSYNC_DATA_DIR: /data
+      STARSYNC_STATE_DIR: /state
+      STARSYNC_SEARCH_INDEX_DIR: /state/search
+      STARSYNC_UI_DIR: /ui
+    ports:
+      - "${STARSYNC_HTTP_PORT:-8989}:8989"
+    volumes:
+      - "${STARSYNC_HOST_DATA_DIR:-${HOME}/.starsync/data}:/data"
+      - "${STARSYNC_HOST_STATE_DIR:-${HOME}/.starsync/state}:/state"
+      - "${STARSYNC_HOST_UI_DIR:-${HOME}/.starsync/ui}:/ui"

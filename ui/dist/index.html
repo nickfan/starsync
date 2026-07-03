@@ -73,25 +73,15 @@
           </section>
 
           <section class="list-tools" aria-label="List tools">
-            <div class="sort-chips" role="group" aria-label="Sort repositories">
-              <button class="sort-chip" type="button" data-sort="updated">
-                Updated
-              </button>
-              <button class="sort-chip" type="button" data-sort="created">
-                Starred
-              </button>
-              <button class="sort-chip" type="button" data-sort="stars">
-                Stars
-              </button>
-              <button class="sort-chip" type="button" data-sort="name">
-                Name
-              </button>
-            </div>
             <label>
-              Direction
-              <select id="direction">
-                <option value="desc">Desc</option>
-                <option value="asc">Asc</option>
+              Sort
+              <select id="sortPreset">
+                <option value="updated:desc">Recent updated</option>
+                <option value="created:desc">Recently starred</option>
+                <option value="stars:desc">Most stars</option>
+                <option value="forks:desc">Most forked</option>
+                <option value="name:asc">Name A-Z</option>
+                <option value="name:desc">Name Z-A</option>
               </select>
             </label>
             <label>

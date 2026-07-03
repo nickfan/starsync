@@ -1,0 +1,18 @@
+[Unit]
+Description=StarSync personal starred repository service
+Documentation=https://github.com/nickfan/starsync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+Environment=PATH=%h/.cargo/bin:%h/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+Environment=STARSYNC_BIND=127.0.0.1:8989
+EnvironmentFile=-%h/.config/starsync/.env
+ExecStart=/usr/bin/env starsync serve
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target

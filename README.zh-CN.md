@@ -29,6 +29,22 @@ starsync --help
 
 StarSync 通过统一 tap 仓库 `nickfan/homebrew-tap` 发布，在 Homebrew 里显示为 `nickfan/tap/starsync`。
 
+作为 Homebrew/Linuxbrew 后台服务运行：
+
+```bash
+mkdir -p "$HOME/.config/starsync"
+printf 'STARSYNC_GITHUB_TOKEN=github_pat_xxx\n' > "$HOME/.config/starsync/.env"
+brew services start starsync
+open http://127.0.0.1:8989/ui/
+```
+
+停止或重启服务：
+
+```bash
+brew services stop starsync
+brew services restart starsync
+```
+
 如果你之前从旧的单项目 tap 安装过，可以这样迁移：
 
 ```bash
@@ -94,6 +110,32 @@ Docker 场景下 `.env` 可以很简单：
 
 ```dotenv
 STARSYNC_GITHUB_TOKEN=github_pat_xxx
+```
+
+也可以直接使用项目内置的 Compose 文件：
+
+```bash
+cp .env.example .env
+# 编辑 .env，设置 STARSYNC_GITHUB_TOKEN。
+docker compose up -d
+open http://127.0.0.1:8989/ui/
+```
+
+Compose 默认挂载这些宿主机路径：
+
+```text
+$HOME/.starsync/data  -> /data
+$HOME/.starsync/state -> /state
+$HOME/.starsync/ui    -> /ui
+```
+
+需要时可以覆盖：
+
+```bash
+STARSYNC_HOST_DATA_DIR=/srv/starsync/data \
+STARSYNC_HOST_STATE_DIR=/srv/starsync/state \
+STARSYNC_HOST_UI_DIR=/srv/starsync/ui \
+docker compose up -d
 ```
 
 也可以只依赖 Docker 在本地构建镜像，不需要宿主机安装 Rust：
@@ -301,6 +343,8 @@ backup = true
 
 ## 快速开始
 
+### 手动 CLI 和 Web UI
+
 初始化本地目录：
 
 ```bash
@@ -336,20 +380,23 @@ starsync search 'notes:向量数据库'
 
 - 布尔操作：`AND`、`OR`、`NOT`、括号，以及相邻条件的隐式 `AND`。
 - 否定简写：`-topic:web` 等价于 `NOT topic:web`。
-- Qualifiers：`owner:`、`user:`、`org:`、`name:`、`repo:`、`language:`、`topic:`、`tag:`、`status:`、`archived:`、`current:`、`is:`、`stars:`、`description:`、`summary:`、`notes:`、`readme:`。
+- Qualifiers：`owner:`、`user:`、`org:`、`name:`、`repo:`、`language:`、`topic:`、`tag:`、`status:`、`archived:`、`current:`、`is:`、`stars:`、`forks:`、`description:`、`summary:`、`notes:`、`readme:`。
 - 本地前缀匹配：`name:^T` 或 `name:T*`。
 - 等值写法：`owner:nickfan`、`owner=nickfan`、`owner:=nickfan`。
-- stars 数值比较：`stars:>=1000`、`stars:<500`、`stars:100..500`。
+- stars 和 forks 数值比较：`stars:>=1000`、`stars:<500`、`stars:100..500`、`forks:>=100`。
 
 GitHub 官方 starred list endpoint 本身只提供基础分页和 sort/direction，所以这些更丰富的表达式由 StarSync 在本地 synced mirror 加 Markdown meta 上执行。
 
-排序和查询表达式是两件事：表达式决定哪些 repo 命中，`--sort` / `--direction` 决定命中结果怎么排序。支持的排序字段包括 `created`（GitHub starred 时间）、`updated`（repo 更新时间）、`name`（完整 repo 名）、`stars`（stargazer 数）。
+排序和查询表达式是两件事：表达式决定哪些 repo 命中，`--sort` / `--direction` 决定命中结果怎么排序。支持的排序字段包括 `created`（你 star 这个 repo 的时间）、`updated`（repo 更新时间）、`name`（完整 repo 名）、`stars`（GitHub stargazer 数）、`forks`（GitHub fork 数）。Web UI 里会把这些暴露成更简单的预设，例如 `Recently starred`、`Recent updated`、`Most stars`、`Most forked`。
 
 典型搜索/列表场景：
 
 ```bash
 # star 数最高的 Rust repo，并排除 web topic
 starsync search 'language:Rust -topic:web' --sort stars --direction desc --limit 20
+
+# fork 数最高的 CLI/topic repo，不需要关键字
+starsync list --topic cli --sort forks --direction desc --limit 20
 
 # 最近 star 的、名字以 T 开头的 repo
 starsync search 'name:^T' --sort created --direction desc --limit 20
@@ -431,6 +478,55 @@ starsync serve --no-ui
 starsync serve --no-ui-extract
 starsync serve --no-ui-overwrite
 starsync serve --no-ui-backup
+```
+
+### Homebrew / Linuxbrew Service
+
+`brew install nickfan/tap/starsync` 之后，把长期服务配置放到
+`~/.config/starsync/.env`：
+
+```bash
+mkdir -p "$HOME/.config/starsync"
+printf 'STARSYNC_GITHUB_TOKEN=github_pat_xxx\n' > "$HOME/.config/starsync/.env"
+brew services start starsync
+```
+
+这个 service 运行的是 `starsync serve`，仍然使用默认数据路径：
+`~/.starsync/data`、`~/.starsync/state` 和 `~/.starsync/ui`。
+
+### systemd --user Service
+
+不使用 Homebrew services 的 Linux 用户可以安装用户级 unit：
+
+```bash
+mkdir -p "$HOME/.config/systemd/user" "$HOME/.config/starsync"
+cp deploy/systemd/starsync.service "$HOME/.config/systemd/user/starsync.service"
+printf 'STARSYNC_GITHUB_TOKEN=github_pat_xxx\n' > "$HOME/.config/starsync/.env"
+systemctl --user daemon-reload
+systemctl --user enable --now starsync.service
+```
+
+查看状态和日志：
+
+```bash
+systemctl --user status starsync.service
+journalctl --user -u starsync.service -f
+```
+
+### Docker Compose
+
+```bash
+cp .env.example .env
+# 编辑 .env，设置 STARSYNC_GITHUB_TOKEN。
+docker compose up -d
+open http://127.0.0.1:8989/ui/
+```
+
+Compose 默认使用发布镜像，并把本地 data/state/UI 目录挂载到
+`$HOME/.starsync` 下。停止服务：
+
+```bash
+docker compose down
 ```
 
 ## 数据目录
@@ -540,13 +636,19 @@ GET  /openapi.yaml
 GET  /openapi.json
 ```
 
+`POST /sync` 和 `POST /enrich/readme` 会把任务放进后台队列，并返回带
+`job_id` 的 `202 Accepted`。可以通过 `GET /events`、`GET /events/recent`
+或 webhook 订阅监听 `task.started`、`task.completed`、`task.failed`。
+
 示例：
 
 ```bash
 curl 'http://127.0.0.1:8989/repos?limit=20&language=Rust&sort=updated&direction=desc'
 curl 'http://127.0.0.1:8989/search?q=retrieval&tag=ai'
 curl 'http://127.0.0.1:8989/search?q=language:Rust%20-topic:web&sort=stars&direction=desc&limit=20'
+curl 'http://127.0.0.1:8989/repos?topic=cli&sort=forks&direction=desc&limit=20'
 curl 'http://127.0.0.1:8989/repos?owner=nickfan&sort=name&direction=asc&limit=50'
+curl -X POST 'http://127.0.0.1:8989/sync'
 curl 'http://127.0.0.1:8989/events/recent?limit=20'
 curl -X POST 'http://127.0.0.1:8989/event-subscriptions' \
   -H 'content-type: application/json' \
@@ -666,7 +768,7 @@ Repository secret:   HOMEBREW_TAP_TOKEN=<有 tap 仓库 contents write 权限的
 
 这些值配置好之后，tap 会由 `.github/workflows/release.yml` 自动维护；正常发版不需要手工编辑 `Formula/starsync.rb`。
 
-生成的 formula 会从 GitHub Release 的 vendored source tarball 构建，并使用 `cargo install --locked --offline`，这样 Homebrew/Linuxbrew 构建不依赖实时 crates.io index，复现性更好。
+生成的 formula 会从 GitHub Release 的 vendored source tarball 构建，并使用 `cargo install --locked --offline`，这样 Homebrew/Linuxbrew 构建不依赖实时 crates.io index，复现性更好。formula 同时声明 `service do`，所以 `brew services start starsync` 会以后台服务运行 `starsync serve`。
 
 参考资料：
 

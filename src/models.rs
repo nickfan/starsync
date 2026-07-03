@@ -40,6 +40,8 @@ pub struct RemoteRepo {
     pub topics: Vec<String>,
     #[serde(default)]
     pub stargazers_count: u64,
+    #[serde(default)]
+    pub forks_count: u64,
     pub default_branch: Option<String>,
     pub pushed_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
@@ -132,6 +134,7 @@ pub struct RepoView {
     #[serde(default)]
     pub topics: Vec<String>,
     pub stargazers_count: Option<u64>,
+    pub forks_count: Option<u64>,
     pub default_branch: Option<String>,
     pub pushed_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
@@ -191,6 +194,7 @@ pub enum RepoSort {
     Updated,
     Name,
     Stars,
+    Forks,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
@@ -225,17 +229,58 @@ pub struct SyncReport {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BackgroundJobAccepted {
+    pub job_id: String,
+    pub kind: String,
+    pub accepted: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StarSyncEvent {
-    SyncStarted { run_id: String },
-    RemoteAdded { repo: String },
-    RemoteRemoved { repo: String },
-    RemoteUpdated { repo: String },
-    MetaChanged { repo: String },
-    ReadmeEnriched { repo: String },
-    SyncCompleted { run_id: String, report: SyncReport },
-    StorageChanged { action: String },
-    Error { message: String },
+    TaskStarted {
+        job_id: String,
+        kind: String,
+    },
+    TaskCompleted {
+        job_id: String,
+        kind: String,
+        summary: String,
+    },
+    TaskFailed {
+        job_id: String,
+        kind: String,
+        message: String,
+    },
+    SyncStarted {
+        run_id: String,
+    },
+    RemoteAdded {
+        repo: String,
+    },
+    RemoteRemoved {
+        repo: String,
+    },
+    RemoteUpdated {
+        repo: String,
+    },
+    MetaChanged {
+        repo: String,
+    },
+    ReadmeEnriched {
+        repo: String,
+    },
+    SyncCompleted {
+        run_id: String,
+        report: SyncReport,
+    },
+    StorageChanged {
+        action: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -32,7 +32,7 @@ const els = {
   tag: document.querySelector("#tag"),
   repoStatus: document.querySelector("#repoStatus"),
   archived: document.querySelector("#archived"),
-  direction: document.querySelector("#direction"),
+  sortPreset: document.querySelector("#sortPreset"),
   perPage: document.querySelector("#perPage"),
   totalCount: document.querySelector("#totalCount"),
   visibleRange: document.querySelector("#visibleRange"),
@@ -40,7 +40,6 @@ const els = {
   prevPage: document.querySelector("#prevPage"),
   nextPage: document.querySelector("#nextPage"),
   results: document.querySelector("#results"),
-  sortChips: Array.from(document.querySelectorAll(".sort-chip")),
   autoSync: document.querySelector("#autoSync"),
   taskCount: document.querySelector("#taskCount"),
   taskList: document.querySelector("#taskList"),
@@ -56,7 +55,12 @@ async function getJson(path, options = {}) {
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `${response.status} ${response.statusText}`);
+    let message = text;
+    try {
+      message = JSON.parse(text).error || text;
+    } catch (_error) {
+    }
+    throw new Error(message || `${response.status} ${response.statusText}`);
   }
   return response.json();
 }
@@ -96,7 +100,14 @@ function toast(message, tone = "neutral") {
   window.setTimeout(() => item.remove(), 5200);
 }
 
+function syncSortFromPreset() {
+  const [sort, direction] = String(els.sortPreset.value || "updated:desc").split(":");
+  state.sort = sort || "updated";
+  state.direction = direction || "desc";
+}
+
 function paramsFromForm() {
+  syncSortFromPreset();
   const params = new URLSearchParams();
   const fields = [
     ["q", els.query.value],
@@ -148,12 +159,6 @@ function renderSummary(payload, itemCount) {
   els.nextPage.disabled = state.searchBusy || state.page * state.perPage >= state.total;
 }
 
-function renderSortChips() {
-  for (const chip of els.sortChips) {
-    chip.dataset.active = String(chip.dataset.sort === state.sort);
-  }
-}
-
 function renderResults(payload) {
   const items = payload.items || [];
   renderSummary(payload, items.length);
@@ -185,7 +190,12 @@ function renderResults(payload) {
     meta.textContent = [
       repo.language,
       repo.user?.status,
-      repo.stargazers_count ? `${formatNumber(repo.stargazers_count)} stars` : "",
+      repo.stargazers_count !== null && repo.stargazers_count !== undefined
+        ? `${formatNumber(repo.stargazers_count)} stars`
+        : "",
+      repo.forks_count !== null && repo.forks_count !== undefined
+        ? `${formatNumber(repo.forks_count)} forks`
+        : "",
     ]
       .filter(Boolean)
       .join(" · ");
@@ -243,19 +253,10 @@ async function search({ resetPage = false } = {}) {
 }
 
 function summarizeTaskPayload(kind, payload) {
-  if (kind === "sync") {
-    return [
-      payload.added !== undefined ? `+${payload.added}` : "",
-      payload.removed !== undefined ? `-${payload.removed}` : "",
-      payload.updated !== undefined ? `${payload.updated} updated` : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
+  if (payload?.accepted && payload?.job_id) {
+    return `${payload.message || "Queued"} · ${payload.job_id.slice(0, 8)}`;
   }
-  if (kind === "enrich") {
-    return `${payload.updated || 0} README updated`;
-  }
-  return "Done";
+  return kind === "sync" ? "Sync queued" : "README enrichment queued";
 }
 
 function renderTasks() {
@@ -296,7 +297,7 @@ function updateTaskButtons() {
     (task) => task.kind === "sync" && task.status === "running",
   );
   const hasEnrich = Array.from(state.tasks.values()).some(
-    (task) => task.kind === "enrich" && task.status === "running",
+    (task) => isEnrichKind(task.kind) && task.status === "running",
   );
   els.syncButton.disabled = hasSync;
   els.enrichButton.disabled = hasEnrich;
@@ -323,13 +324,17 @@ async function runTask(kind, path, label, { quiet = false } = {}) {
 
   try {
     const payload = await getJson(path, { method: "POST" });
+    const jobId = payload.job_id || id;
     const task = state.tasks.get(id);
-    task.status = "done";
+    task.id = jobId;
+    task.status = "running";
     task.detail = summarizeTaskPayload(kind, payload);
-    task.finishedAt = Date.now();
+    task.jobId = jobId;
+    state.tasks.delete(id);
+    state.tasks.set(jobId, task);
     renderTasks();
-    toast(`${label} completed`, "ok");
-    await Promise.all([loadEvents({ notify: true }), search()]);
+    if (!quiet) toast(`${label} queued`, "ok");
+    await loadEvents({ notify: true });
   } catch (error) {
     const task = state.tasks.get(id);
     task.status = "failed";
@@ -345,10 +350,58 @@ async function runTask(kind, path, label, { quiet = false } = {}) {
 
 function eventDetails(event) {
   const body = event.event || {};
-  const kind = Object.keys(body)[0];
-  const data = kind ? body[kind] || {} : {};
-  const repo = data.repo ? ` · ${data.repo}` : "";
-  return { kind: event.name || kind || "event", repo };
+  const repo = body.repo ? ` · ${body.repo}` : "";
+  const summary = body.summary ? ` · ${body.summary}` : "";
+  const message = body.message ? ` · ${body.message}` : "";
+  return { kind: event.name || body.type || "event", repo: `${repo}${summary}${message}` };
+}
+
+function taskLabel(kind) {
+  if (kind === "sync") return "Sync Stars";
+  if (kind === "enrich_readme" || kind === "enrich") return "Enrich README";
+  return kind || "Task";
+}
+
+function isEnrichKind(kind) {
+  return kind === "enrich" || kind === "enrich_readme";
+}
+
+function applyEventToTasks(event) {
+  const body = event.event || {};
+  const type = body.type;
+  const jobId = body.job_id;
+  if (!jobId || !type?.startsWith("task_")) return false;
+
+  let task = state.tasks.get(jobId);
+  if (!task) {
+    task = {
+      id: jobId,
+      jobId,
+      kind: body.kind,
+      label: taskLabel(body.kind),
+      createdAt: new Date(event.emitted_at).getTime(),
+      status: "running",
+      detail: "Running",
+    };
+    state.tasks.set(jobId, task);
+  }
+
+  if (type === "task_started") {
+    task.status = "running";
+    task.detail = "Running";
+  }
+  if (type === "task_completed") {
+    task.status = "done";
+    task.detail = body.summary || "Done";
+    task.finishedAt = new Date(event.emitted_at).getTime();
+    return true;
+  }
+  if (type === "task_failed") {
+    task.status = "failed";
+    task.detail = body.message || "Failed";
+    task.finishedAt = new Date(event.emitted_at).getTime();
+  }
+  return false;
 }
 
 function renderEvents(events) {
@@ -380,15 +433,29 @@ async function loadEvents({ notify = false } = {}) {
   try {
     const events = await getJson("/events/recent?limit=12");
     renderEvents(events);
+    let shouldRefreshResults = false;
     if (state.eventsPrimed && notify) {
       for (const event of events.slice().reverse()) {
         if (!state.seenEvents.has(event.id)) {
+          if (applyEventToTasks(event)) {
+            shouldRefreshResults = true;
+          }
           toast(event.name, "ok");
         }
       }
     }
+    if (!state.eventsPrimed) {
+      for (const event of events.slice().reverse()) {
+        applyEventToTasks(event);
+      }
+    }
     state.seenEvents = new Set(events.map((event) => event.id));
     state.eventsPrimed = true;
+    renderTasks();
+    updateTaskButtons();
+    if (shouldRefreshResults) {
+      await search();
+    }
   } catch (error) {
     toast(error.message, "bad");
   }
@@ -441,18 +508,10 @@ for (const input of [els.query, els.owner, els.language, els.topic, els.tag]) {
   });
 }
 
-for (const select of [els.repoStatus, els.archived, els.direction, els.perPage]) {
+for (const select of [els.repoStatus, els.archived, els.sortPreset, els.perPage]) {
   select.addEventListener("change", () => {
-    if (select === els.direction) state.direction = els.direction.value;
+    if (select === els.sortPreset) syncSortFromPreset();
     if (select === els.perPage) state.perPage = Number(els.perPage.value);
-    search({ resetPage: true });
-  });
-}
-
-for (const chip of els.sortChips) {
-  chip.addEventListener("click", () => {
-    state.sort = chip.dataset.sort;
-    renderSortChips();
     search({ resetPage: true });
   });
 }
@@ -480,13 +539,12 @@ const storedAutoSync = localStorage.getItem(AUTO_SYNC_KEY);
 if (storedAutoSync && [...els.autoSync.options].some((option) => option.value === storedAutoSync)) {
   els.autoSync.value = storedAutoSync;
 }
-els.direction.value = state.direction;
+els.sortPreset.value = `${state.sort}:${state.direction}`;
 els.perPage.value = String(state.perPage);
-renderSortChips();
 renderTasks();
 scheduleAutoSync();
 window.setInterval(updateAutoSyncLabel, 30000);
-window.setInterval(() => loadEvents({ notify: true }), 30000);
+window.setInterval(() => loadEvents({ notify: true }), 5000);
 
 await loadHealth();
 await Promise.all([loadEvents(), search()]);

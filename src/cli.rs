@@ -371,6 +371,7 @@ fn parse_sort(value: &str) -> Result<crate::models::RepoSort> {
         "updated" => Ok(crate::models::RepoSort::Updated),
         "name" => Ok(crate::models::RepoSort::Name),
         "stars" => Ok(crate::models::RepoSort::Stars),
+        "forks" => Ok(crate::models::RepoSort::Forks),
         other => anyhow::bail!("unsupported sort: {other}"),
     }
 }

@@ -225,27 +225,9 @@ h2 {
 
 .list-tools {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 130px 120px;
+  grid-template-columns: minmax(220px, 1fr) 120px;
   gap: 10px;
   align-items: end;
-}
-
-.sort-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.sort-chip {
-  border-color: var(--line);
-  background: var(--panel);
-  color: var(--text);
-}
-
-.sort-chip[data-active="true"] {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: #ffffff;
 }
 
 .summary {

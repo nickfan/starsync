@@ -341,6 +341,7 @@ fn view_from_remote(remote: RemoteRepo, meta: RepoMeta, readme: Option<&String>)
         language: remote.language,
         topics: remote.topics,
         stargazers_count: Some(remote.stargazers_count),
+        forks_count: Some(remote.forks_count),
         default_branch: remote.default_branch,
         pushed_at: remote.pushed_at,
         updated_at: remote.updated_at,

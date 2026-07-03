@@ -178,6 +178,7 @@ fn repo_ordering(a: &RepoView, b: &RepoView, sort: RepoSort) -> Ordering {
         RepoSort::Updated => a.updated_at.cmp(&b.updated_at),
         RepoSort::Name => a.full_name.cmp(&b.full_name),
         RepoSort::Stars => a.stargazers_count.cmp(&b.stargazers_count),
+        RepoSort::Forks => a.forks_count.cmp(&b.forks_count),
     }
 }
 
@@ -608,6 +609,10 @@ fn qualifier_matches(repo: &RepoView, field: &str, value: &str) -> bool {
         "stars" | "stargazers" | "stargazers_count" => repo
             .stargazers_count
             .map(|stars| match_number(stars, value))
+            .unwrap_or(false),
+        "forks" | "forks_count" => repo
+            .forks_count
+            .map(|forks| match_number(forks, value))
             .unwrap_or(false),
         _ => false,
     }
@@ -1040,6 +1045,24 @@ mod tests {
     }
 
     #[test]
+    fn list_results_sort_by_forks_without_query() {
+        let mut low = repo_for("alice", "low", &[]);
+        low.forks_count = Some(2);
+        let mut high = repo_for("alice", "high", &[]);
+        high.forks_count = Some(50);
+        let filters = RepoFilters {
+            sort: Some(RepoSort::Forks),
+            direction: Some(SortDirection::Desc),
+            ..RepoFilters::default()
+        };
+
+        let results = list_repos(vec![low, high], &filters);
+
+        assert_eq!(results.items[0].name, "high");
+        assert_eq!(results.items[1].name, "low");
+    }
+
+    #[test]
     fn search_results_sort_by_name_ascending() {
         let mut beta = repo_for("alice", "beta", &[]);
         beta.description = Some("agent toolkit".to_string());
@@ -1084,6 +1107,7 @@ mod tests {
         rust_cli.language = Some("Rust".to_string());
         rust_cli.topics = vec!["cli".to_string()];
         rust_cli.stargazers_count = Some(1500);
+        rust_cli.forks_count = Some(200);
 
         let mut rust_web = repo_for("alice", "webapp", &[]);
         rust_web.language = Some("Rust".to_string());
@@ -1091,7 +1115,10 @@ mod tests {
         rust_web.stargazers_count = Some(2000);
 
         let filters = RepoFilters {
-            q: Some("(language:Rust AND topic:cli AND stars:>=1000) OR owner:bob".to_string()),
+            q: Some(
+                "(language:Rust AND topic:cli AND stars:>=1000 AND forks:>=100) OR owner:bob"
+                    .to_string(),
+            ),
             ..RepoFilters::default()
         };
 
