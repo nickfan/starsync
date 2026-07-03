@@ -23,12 +23,19 @@ StarSync 是一个 local-first 的 Rust 服务，用来把你的 GitHub starred 
 发布 workflow 更新 tap 后，可以用 Homebrew 或 Linuxbrew 安装：
 
 ```bash
-brew tap nickfan/starsync
-brew install starsync
+brew install nickfan/tap/starsync
 starsync --help
 ```
 
-推荐的公开 tap 仓库名是 `nickfan/homebrew-starsync`，对应 `brew tap nickfan/starsync`。
+StarSync 通过统一 tap 仓库 `nickfan/homebrew-tap` 发布，在 Homebrew 里显示为 `nickfan/tap/starsync`。
+
+如果你之前从旧的单项目 tap 安装过，可以这样迁移：
+
+```bash
+brew uninstall starsync
+brew untap nickfan/starsync
+brew install nickfan/tap/starsync
+```
 
 ### Docker
 
@@ -639,10 +646,10 @@ Buildx 构建同时推送 GHCR 和 Docker Hub tags，并使用 GitHub Actions la
 
 `DOCKER_PLATFORMS` 默认是 `linux/amd64`。如果需要多架构镜像，可以改成 `linux/amd64,linux/arm64`；第一次 multi-arch 构建会更慢，因为 Rust 会在 Docker 里按目标平台分别编译。
 
-更新 Homebrew/Linuxbrew tap 时，先创建类似 `nickfan/homebrew-starsync` 的 tap 仓库，然后配置：
+更新 Homebrew/Linuxbrew tap 时，创建或复用统一 tap 仓库 `nickfan/homebrew-tap`，然后配置：
 
 ```text
-Repository variable: HOMEBREW_TAP_REPO=nickfan/homebrew-starsync
+Repository variable: HOMEBREW_TAP_REPO=nickfan/homebrew-tap
 Repository secret:   HOMEBREW_TAP_TOKEN=<有 tap 仓库 contents write 权限的 PAT>
 ```
 

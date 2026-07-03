@@ -23,12 +23,19 @@ It mirrors your GitHub starred repository list, keeps your personal metadata in 
 After the release workflow updates the tap, install from Homebrew or Linuxbrew:
 
 ```bash
-brew tap nickfan/starsync
-brew install starsync
+brew install nickfan/tap/starsync
 starsync --help
 ```
 
-The recommended public tap repository name is `nickfan/homebrew-starsync`, which maps to `brew tap nickfan/starsync`.
+StarSync is published through the shared `nickfan/homebrew-tap` repository, which maps to `nickfan/tap/starsync` in Homebrew output.
+
+If you installed from the old single-project tap, switch to the shared tap:
+
+```bash
+brew uninstall starsync
+brew untap nickfan/starsync
+brew install nickfan/tap/starsync
+```
 
 ### Docker
 
@@ -644,10 +651,10 @@ available, and uses GitHub Actions layer cache for Cargo and Docker layers.
 
 `DOCKER_PLATFORMS` defaults to `linux/amd64`. Set it to `linux/amd64,linux/arm64` when you want multi-architecture Docker images; the first multi-arch build takes longer because Rust is compiled inside Docker for each target platform.
 
-To update a Homebrew/Linuxbrew tap, create a tap repository such as `nickfan/homebrew-starsync` and configure:
+To update a Homebrew/Linuxbrew tap, create or reuse the shared tap repository `nickfan/homebrew-tap` and configure:
 
 ```text
-Repository variable: HOMEBREW_TAP_REPO=nickfan/homebrew-starsync
+Repository variable: HOMEBREW_TAP_REPO=nickfan/homebrew-tap
 Repository secret:   HOMEBREW_TAP_TOKEN=<PAT with contents write access to the tap repository>
 ```
 
