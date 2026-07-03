@@ -762,6 +762,10 @@ Docker images are built through the multi-stage Dockerfile, so release image
 builds do not depend on the GitHub runner's Rust version. The workflow pushes
 GHCR and Docker Hub tags from one Buildx build when Docker Hub credentials are
 available, and uses GitHub Actions layer cache for Cargo and Docker layers.
+The CI Docker smoke build and release Docker publish use separate write scopes
+but read both scopes, so a green `master` build can warm the release image
+cache without making the release cache depend entirely on CI. Release packaging
+also caches Cargo registry/git data and `target/` between runs.
 
 `DOCKER_PLATFORMS` defaults to `linux/amd64`. Set it to `linux/amd64,linux/arm64` when you want multi-architecture Docker images; the first multi-arch build takes longer because Rust is compiled inside Docker for each target platform.
 
